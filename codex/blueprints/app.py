@@ -163,11 +163,16 @@ def explore():
 
 @app.route("/morphotyper")
 def morpho_typer():
-    filter_string = request.args.get("filter_string", "")
+    f_type_string = request.args.get("f_type_string", "")
+    m_type_string = request.args.get("m_type_string", "")
+    seg_ids_string = request.args.get("seg_ids_string", "")
     logger.info("Loading Morpho-Typer page")
     return render_template(
         "morpho_typer.html",
         data_versions=DATA_SNAPSHOT_VERSION_DESCRIPTIONS,
+        f_type_string=f_type_string,
+        m_type_string=m_type_string,
+        seg_ids_string=seg_ids_string,
     )
 
 def render_neuron_list(
