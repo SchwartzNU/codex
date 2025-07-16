@@ -7,9 +7,15 @@ Morpho-Typer
 {% block content %}
 <nav class="navbar navbar-light bg-light">
     <form class="form-inline">
+        <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" autofocus type="search"
+               id="f_type_string" name="f_type_string" placeholder="f-type" aria-label="f_type_input"
+               value="{{f_type_string}}">
+        <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" autofocus type="search"
+               id="m_type_string" name="m_type_string" placeholder="m-type" aria-label="m_type_input"
+               value="{{m_type_string}}">
         <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" autofocus type="search"
-               id="filter_string" name="filter_string" placeholder="search cell types" aria-label="Filter"
-               value="{{filter_string}}">
+               id="seg_ids_string" name="seg_ids_string" placeholder="seg_ids" aria-label="seg_id_input"
+               value="{{seg_ids_string}}">
         <button class="btn btn btn-primary my-2 my-sm-0" type="submit"><i class="fa-solid fa-magnifying-glass"></i>
         </button>
     </form>
