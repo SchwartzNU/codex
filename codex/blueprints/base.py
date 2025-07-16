@@ -43,6 +43,7 @@ tabs = [
     ["neuropils", "Neuropils", "app"],
     ["heatmaps", "Heatmaps", "app"],
     ["motifs", "Motifs", "app"],
+    ["morpho_typer", "MorphoTyper", "app"],
     ["about_codex", "About", "base"],
 ]
 

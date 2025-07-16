@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}
+Morpho-Typer
+{% endblock title %}
+
+{% block content %}
+<nav class="navbar navbar-light bg-light">
+    <form class="form-inline">
+        <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" autofocus type="search"
+               id="filter_string" name="filter_string" placeholder="search cell types" aria-label="Filter"
+               value="{{filter_string}}">
+        <button class="btn btn btn-primary my-2 my-sm-0" type="submit"><i class="fa-solid fa-magnifying-glass"></i>
+        </button>
+    </form>
+</nav>
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="col-md-6">
+      <div class="card bg-light mb-3" style="margin: 5px;">
+          <div class="card-header" style="color: purple; font-size: 18px;">
+              Skeletons
+          </div>
+          <div class="card-body" >
+              <table class="table table-striped">
+                  <thead>
+                      <tr>
+                          <th scope="col">Front/Side View</th>
+                          <th scope="col">Stratification</th>
+                      </tr>
+                  </thead>
+                  <tbody>
+                      <!-- Table rows go here -->
+                  </tbody>
+              </table>        
+          </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card bg-light mb-3" style="margin: 5px;">
+        <div class="card-header" style="color: purple; font-size: 18px;">
+          Neuroglancer view
+        </div>
+        <div class="card-body">
+          <div style="margin-top: 0px;">
+            <iframe src="https://spelunker.cave-explorer.org/#!middleauth+https://global.daf-apis.com/nglstate/api/v1/6586111865389056" width="100%" height="400" style="border:1px solid #ccc; border-radius: 4px;"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock content %}
