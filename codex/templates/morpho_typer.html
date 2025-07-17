@@ -37,7 +37,22 @@ Morpho-Typer
                       </tr>
                   </thead>
                   <tbody>
-                      <!-- Table rows go here -->
+                    {% for i in range(seg_ids|length) %}
+                      <tr class="skeleton-row" data-segid="{{ seg_ids[i] }}" style="cursor:pointer;">
+                        <td>
+                          <div style="display: flex; align-items: center;">
+                            <img src="{{ skeleton_imgs[i] }}" alt="Skeleton {{ seg_ids[i] }}" style="max-height: 120px; border: 1px solid #ccc; border-radius: 3px; margin-right: 10px;">
+                          </div>
+                        </td>
+                        <td>
+                          {% if strat_imgs[i] %}
+                            <img src="{{ strat_imgs[i] }}" alt="Stratification {{ seg_ids[i] }}" style="max-height: 120px; max-width: 500px; border: 1px solid #ccc; border-radius: 3px;">
+                          {% else %}
+                            <span class="text-muted">No stratification image</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
                   </tbody>
               </table>        
           </div>
@@ -50,11 +65,60 @@ Morpho-Typer
         </div>
         <div class="card-body">
           <div style="margin-top: 0px;">
-            <iframe src="https://spelunker.cave-explorer.org/#!middleauth+https://global.daf-apis.com/nglstate/api/v1/6586111865389056" width="100%" height="400" style="border:1px solid #ccc; border-radius: 4px;"></iframe>
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+            </div>
+            <iframe id="ng-iframe" src="" width="100%" height="400" style="border:1px solid #ccc; border-radius: 4px;"></iframe>
           </div>
         </div>
       </div>
     </div>
   </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+  const rows = document.querySelectorAll('.skeleton-row');
+  // Get all seg_ids from the table (from data-segid attributes)
+  const segids = Array.from(rows).map(r => r.getAttribute('data-segid'));
+  const ngFrame = document.querySelector('#ng-iframe');
+  // Set initial selection to the first segid (if any)
+  if (segids.length > 0 && ngFrame) {
+    try {
+      const params = new URLSearchParams();
+      segids.forEach(id => params.append('segids', id));
+      params.append('selected', segids[0]);
+      const response = await fetch(`/app/neuroglancer_url?${params.toString()}`);
+      const data = await response.json();
+      if (data.url) {
+        ngFrame.src = data.url;
+      }
+    } catch (e) {
+      console.error('Failed to fetch initial Neuroglancer URL:', e);
+    }
+  }
+  let lastNgUrl = ngFrame ? ngFrame.src : '';
+  rows.forEach(row => {
+    row.addEventListener('click', async function() {
+      rows.forEach(r => r.style.backgroundColor = '');
+      this.style.backgroundColor = '#e0d7f7';
+      const segid = this.getAttribute('data-segid');
+      if (ngFrame) {
+        try {
+          const params = new URLSearchParams();
+          segids.forEach(id => params.append('segids', id));
+          params.append('selected', segid);
+          const response = await fetch(`/app/neuroglancer_url?${params.toString()}`);
+          const data = await response.json();
+          if (data.url) {
+            ngFrame.src = data.url;
+            lastNgUrl = data.url;
+          }
+        } catch (e) {
+          console.error('Failed to fetch Neuroglancer URL:', e);
+        }
+      }
+    });
+  });
+});
+</script>
 {% endblock content %}

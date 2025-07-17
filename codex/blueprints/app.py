@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import base64
 from datetime import datetime
 
 from flask import (
@@ -166,13 +167,47 @@ def morpho_typer():
     f_type_string = request.args.get("f_type_string", "")
     m_type_string = request.args.get("m_type_string", "")
     seg_ids_string = request.args.get("seg_ids_string", "")
+    data_version = "EW2" # Morpho-Typer is only available for EW2 data version for now
     logger.info("Loading Morpho-Typer page")
-    return render_template(
-        "morpho_typer.html",
-        data_versions=DATA_SNAPSHOT_VERSION_DESCRIPTIONS,
+    return render_morpho_typer_neuron_list(
+        data_version=data_version,
         f_type_string=f_type_string,
         m_type_string=m_type_string,
         seg_ids_string=seg_ids_string,
+    )
+
+def render_morpho_typer_neuron_list(
+    data_version,
+    f_type_string,
+    m_type_string,
+    seg_ids_string
+):
+    seg_ids = [int(sid.strip()) for sid in seg_ids_string.split(",") if sid.strip().isdigit()]
+    skeleton_imgs = []
+    strat_imgs = []
+    DATA_ROOT_PATH = "static/data"
+    for seg_id in seg_ids:
+        # Skeleton image
+        skel_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.png"
+        if os.path.exists(skel_path):
+            with open(skel_path, "rb") as img_file:
+                skeleton_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
+        else:
+            skeleton_imgs.append(None)
+        # Stratification image
+        strat_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/strat_profile.png"
+        if os.path.exists(strat_path):
+            with open(strat_path, "rb") as img_file:
+                strat_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
+        else:
+            strat_imgs.append(None)
+
+    return render_template(
+        "morpho_typer.html",
+        skeleton_imgs=skeleton_imgs,
+        strat_imgs=strat_imgs,
+        seg_ids=seg_ids,
+        data_version=data_version,
     )
 
 def render_neuron_list(
@@ -1070,3 +1105,84 @@ def motifs():
         results=search_results,
         show_explainer=show_explainer,
     )
+
+
+@app.route("/neuroglancer_url")
+def neuroglancer_url():
+    """
+    Returns a Neuroglancer state URL for a given seg_id (or list of seg_ids), with the selected one optionally highlighted.
+    Only supports the EW2 (stroeh_sem_mouse_retina) dataset.
+    """
+    import urllib.parse
+    segids = request.args.getlist("segids")
+    selected = request.args.get("selected")
+    highlight_color = request.args.get("highlight_color", "#29ff29")
+
+    # Optional position/orientation/crossSectionScale/projectionScale for advanced use
+    position = request.args.get("position")
+    cross_section_scale = request.args.get("crossSectionScale")
+    projection_orientation = request.args.get("projectionOrientation")
+    projection_scale = request.args.get("projectionScale")
+    projection_depth = request.args.get("projectionDepth")
+
+    # Parse segids as ints
+    try:
+        segids = [int(s) for s in segids if str(s).isdigit()]
+    except Exception:
+        return {"error": "Invalid segids"}, 400
+
+        logger.info(f"Generated default Neuroglancer URL: {url} (no segids)")
+        return {"url": url}
+
+    # Otherwise, build config with no annotation layers, and color selected segid green, others white
+    if segids:
+        selected_str = str(selected) if selected else str(segids[0])
+        segment_colors = {str(sid): (highlight_color if str(sid) == selected_str else "#ffffff") for sid in segids}
+    else:
+        selected_str = None
+        segment_colors = {}
+
+    # Flip axes: positive y up, positive x right. Use quaternion [1, 0, 0, 0] (180 deg about x axis).
+    config = {
+        "dimensions": {"x": [1.6e-8, "m"], "y": [1.6e-8, "m"], "z": [4e-8, "m"]},
+        "position": [41516.5, 41555.5, 838.5],
+        "crossSectionScale": 0.45099710384944064,
+        "projectionOrientation": [1, 0, 0, 0],  # 180 deg about x: flips y axis
+        "projectionScale": 83820.52470573061,
+        "projectionDepth": -75.71853703460232,
+        "layers": [
+            {
+                "type": "image",
+                "source": "precomputed://gs://stroeh_sem_mouse_retina/image/v2",
+                "tab": "source",
+                "name": "img",
+            },
+            {
+                "type": "segmentation",
+                "source": {
+                    "url": "graphene://middleauth+https://minnie.microns-daf.com/segmentation/table/stroeh_mouse_retina",
+                    "state": {
+                        "multicut": {"sinks": [], "sources": []},
+                        "merge": {"merges": []},
+                        "findPath": {},
+                    },
+                },
+                "tab": "segments",
+                "annotationColor": "#ffffff",
+                "segments": [str(sid) for sid in segids],
+                "colorSeed": 225267639,
+                "segmentColors": segment_colors,
+                "name": "stroeh_mouse_retina",
+            },
+        ],
+        "showSlices": False,
+        "gpuMemoryLimit": 4000000000,
+        "systemMemoryLimit": 8000000000,
+        "selectedLayer": {"layer": "stroeh_mouse_retina"},
+        "layout": {"type": "3d", "orthographicProjection": True},
+        "jsonStateServer": "https://global.daf-apis.com/nglstate/api/v1/post",
+    }
+
+    url = f"https://spelunker.cave-explorer.org/#!{urllib.parse.quote(json.dumps(config))}"
+    # logger.info(f"Generated Neuroglancer fragment URL: {url} for segids: {segids} (selected in green, others white)")
+    return {"url": url}
