@@ -63,6 +63,7 @@ from codex.utils.graph_algos import distance_matrix
 
 from codex.utils.pathway_vis import pathway_chart_data_rows
 from codex.utils.thumbnails import url_for_skeleton
+from codex.utils.gsheets import seg_ids_matching_gsheet
 from codex import logger
 
 app = Blueprint("app", __name__, url_prefix="/app")
@@ -182,7 +183,28 @@ def render_morpho_typer_neuron_list(
     m_type_string,
     seg_ids_string
 ):
-    seg_ids = [int(sid.strip()) for sid in seg_ids_string.split(",") if sid.strip().isdigit()]
+    if f_type_string:   # If f_type_string is provided, it will be used to filter neurons
+        f_type_string = f_type_string.strip()
+        seg_ids = seg_ids_matching_gsheet(
+            search_string=f_type_string,
+            gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+            user_id="gregs_eyewire2",
+            column_name="Common name",
+        )
+    elif m_type_string:    # If m_type_string is provided, it will be used to filter neurons
+        m_type_string = m_type_string.strip()
+        seg_ids = seg_ids_matching_gsheet(
+            search_string=f_type_string,
+            gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+            user_id="gregs_eyewire2",
+            column_name="Eyewire I name",
+        )
+    elif seg_ids_string:
+        seg_ids = [int(sid.strip()) for sid in seg_ids_string.split(",") if sid.strip().isdigit()]
+    else:
+        seg_ids = []
+    
+    logger.info(f"Loading Morpho-Typer for {len(seg_ids)} segment IDs: {seg_ids}")
     skeleton_imgs = []
     strat_imgs = []
     DATA_ROOT_PATH = "static/data"
