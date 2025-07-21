@@ -1245,7 +1245,7 @@ def neuroglancer_url():
     selected = request.args.get("selected")
     highlight_color = request.args.get("highlight_color", "#29ff29")
 
-    # Optional position/orientation/crossSectionScale/projectionScale for advanced use
+    # Optional view parameters
     position = request.args.get("position")
     cross_section_scale = request.args.get("crossSectionScale")
     projection_orientation = request.args.get("projectionOrientation")
@@ -1258,23 +1258,22 @@ def neuroglancer_url():
     except Exception:
         return {"error": "Invalid segids"}, 400
 
-        logger.info(f"Generated default Neuroglancer URL: {url} (no segids)")
-        return {"url": url}
-
-    # Otherwise, build config with no annotation layers, and color selected segid green, others white
+    # Build layer colors
     if segids:
         selected_str = str(selected) if selected else str(segids[0])
-        segment_colors = {str(sid): (highlight_color if str(sid) == selected_str else "#ffffff") for sid in segids}
+        segment_colors = {
+            str(sid): (highlight_color if str(sid) == selected_str else "#ffffff")
+            for sid in segids
+        }
     else:
-        selected_str = None
         segment_colors = {}
 
-    # Flip axes: positive y up, positive x right. Use quaternion [1, 0, 0, 0] (180 deg about x axis).
+    # Construct full Neuroglancer state
     config = {
         "dimensions": {"x": [1.6e-8, "m"], "y": [1.6e-8, "m"], "z": [4e-8, "m"]},
         "position": [41516.5, 41555.5, 838.5],
         "crossSectionScale": 0.45099710384944064,
-        "projectionOrientation": [1, 0, 0, 0],  # 180 deg about x: flips y axis
+        "projectionOrientation": [1, 0, 0, 0],
         "projectionScale": 83820.52470573061,
         "projectionDepth": -75.71853703460232,
         "layers": [
@@ -1311,5 +1310,4 @@ def neuroglancer_url():
     }
 
     url = f"https://spelunker.cave-explorer.org/#!{urllib.parse.quote(json.dumps(config))}"
-    # logger.info(f"Generated Neuroglancer fragment URL: {url} for segids: {segids} (selected in green, others white)")
     return {"url": url}
