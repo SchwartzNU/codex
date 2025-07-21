@@ -10,6 +10,7 @@ from flask import (
     redirect,
     request,
     url_for,
+    jsonify
 )
 from user_agents import parse as parse_ua
 
@@ -65,6 +66,7 @@ from codex.utils.pathway_vis import pathway_chart_data_rows
 from codex.utils.thumbnails import url_for_skeleton
 from codex.utils.gsheets import seg_ids_matching_gsheet
 from codex import logger
+from codex.utils.arbor_stats import load_swc, arborStatsFromSkeleton
 
 app = Blueprint("app", __name__, url_prefix="/app")
 
@@ -207,6 +209,8 @@ def render_morpho_typer_neuron_list(
     logger.info(f"Loading Morpho-Typer for {len(seg_ids)} segment IDs: {seg_ids}")
     skeleton_imgs = []
     strat_imgs = []
+    arbor_stats = []
+    arbor_stats_units = []
     DATA_ROOT_PATH = "static/data"
     for seg_id in seg_ids:
         # Skeleton image
@@ -223,14 +227,62 @@ def render_morpho_typer_neuron_list(
                 strat_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
         else:
             strat_imgs.append(None)
-
+        swc_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.swc"
+        if os.path.exists(swc_path):
+            logger.info(f"Loading SWC for segment {seg_id} from {swc_path}")
+            coords, radii, edges = load_swc(swc_path)
+            logger.info(f"Computing arbor stats for segment {seg_id}")
+            stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)  
+            arbor_stats.append(stats)
+            arbor_stats_units.append(units)
+                        
     return render_template(
         "morpho_typer.html",
         skeleton_imgs=skeleton_imgs,
         strat_imgs=strat_imgs,
+        arbor_stats=arbor_stats,
+        units=arbor_stats_units,
         seg_ids=seg_ids,
         data_version=data_version,
     )
+
+
+# AJAX endpoint to return stats + units for a given segment ID
+@app.route("/arbor_stats", defaults={"segid": None})
+@app.route("/arbor_stats/<segid>")
+def arbor_stats(segid):
+    """
+    Return JSON {stats: {...}, units: {...}} for the given segid.
+    Accepts either ?segid=<id> or path /app/arbor_stats/<id>.
+    """
+    # allow passing via query-string if not in path
+    if segid is None:
+        segid = request.args.get("segid")
+    if not segid:
+        return jsonify({"error": "Missing segid"}), 400
+
+    swc_path = os.path.join(
+        "static", "data", "EW2", "skeletons", str(segid), "skeleton_warped.swc"
+    )
+    if not os.path.exists(swc_path):
+        return jsonify({"error": "SWC not found"}), 404
+
+    coords, radii, edges = load_swc(swc_path)
+    stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)
+
+    # Remove any array-valued stats; convert numpy scalars to Python types
+    import numpy as _np
+    serializable_stats = {}
+    for key, val in stats.items():
+        if isinstance(val, _np.ndarray):
+            # skip array entries entirely
+            continue
+        if isinstance(val, _np.generic):
+            serializable_stats[key] = val.item()
+        else:
+            serializable_stats[key] = val
+    stats = serializable_stats
+    return jsonify({"stats": stats, "units": units})
 
 def render_neuron_list(
     data_version,

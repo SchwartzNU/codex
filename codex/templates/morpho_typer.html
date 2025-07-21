@@ -9,66 +9,108 @@ Morpho-Typer
     <form class="form-inline">
         <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" autofocus type="search"
                id="f_type_string" name="f_type_string" placeholder="f-type" aria-label="f_type_input"
-               value="{{f_type_string}}">
-        <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" autofocus type="search"
+               value="{{ f_type_string }}">
+        <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" type="search"
                id="m_type_string" name="m_type_string" placeholder="m-type" aria-label="m_type_input"
-               value="{{m_type_string}}">
-        <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" autofocus type="search"
-               id="seg_ids_string" name="seg_ids_string" placeholder="seg_ids" aria-label="seg_id_input"
-               value="{{seg_ids_string}}">
-        <button class="btn btn btn-primary my-2 my-sm-0" type="submit"><i class="fa-solid fa-magnifying-glass"></i>
+               value="{{ m_type_string }}">
+        <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" type="search"
+               id="seg_ids_string" name="seg_ids_string" placeholder="seg_ids"
+               aria-label="seg_id_input" value="{{ seg_ids_string }}">
+        <button class="btn btn-primary my-2 my-sm-0" type="submit">
+            <i class="fa-solid fa-magnifying-glass"></i>
         </button>
     </form>
 </nav>
 
 <div class="container-fluid">
   <div class="row">
+    <!-- Skeletons Table -->
     <div class="col-md-6">
       <div class="card bg-light mb-3" style="margin: 5px;">
-          <div class="card-header" style="color: purple; font-size: 18px;">
-              Skeletons
-          </div>
-          <div class="card-body" >
-              <table class="table table-striped">
-                  <thead>
-                      <tr>
-                          <th scope="col">Front/Side View</th>
-                          <th scope="col">Stratification</th>
-                      </tr>
-                  </thead>
-                  <tbody>
-                    {% for i in range(seg_ids|length) %}
-                      <tr class="skeleton-row" data-segid="{{ seg_ids[i] }}" style="cursor:pointer;">
-                        <td>
-                          <div style="display: flex; align-items: center;">
-                            <img src="{{ skeleton_imgs[i] }}" alt="Skeleton {{ seg_ids[i] }}" style="max-height: 120px; border: 1px solid #ccc; border-radius: 3px; margin-right: 10px;">
-                          </div>
-                        </td>
-                        <td>
-                          {% if strat_imgs[i] %}
-                            <img src="{{ strat_imgs[i] }}" alt="Stratification {{ seg_ids[i] }}" style="max-height: 120px; max-width: 500px; border: 1px solid #ccc; border-radius: 3px;">
-                          {% else %}
-                            <span class="text-muted">No stratification image</span>
-                          {% endif %}
-                        </td>
-                      </tr>
-                    {% endfor %}
-                  </tbody>
-              </table>        
-          </div>
+        <div class="card-header" style="color: purple; font-size: 18px;">
+          Skeletons
+        </div>
+        <div class="card-body">
+          <table class="table table-striped">
+            <thead>
+              <tr>
+                <th scope="col">Front/Side View</th>
+                <th scope="col">Stratification</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for i in range(seg_ids|length) %}
+                <tr class="skeleton-row" data-segid="{{ seg_ids[i] }}" style="cursor:pointer;">
+                  <td>
+                    <img src="{{ skeleton_imgs[i] }}" alt="Skeleton {{ seg_ids[i] }}"
+                         style="max-height: 120px; border: 1px solid #ccc; border-radius: 3px; margin-right: 10px;">
+                  </td>
+                  <td>
+                    {% if strat_imgs[i] %}
+                      <img src="{{ strat_imgs[i] }}" alt="Stratification {{ seg_ids[i] }}"
+                           style="max-height: 120px; max-width: 100%; border: 1px solid #ccc; border-radius: 3px;">
+                    {% else %}
+                      <span class="text-muted">No stratification image</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
+
+    <!-- Neuroglancer + Stats -->
     <div class="col-md-6">
+      <!-- Neuroglancer view -->
       <div class="card bg-light mb-3" style="margin: 5px;">
         <div class="card-header" style="color: purple; font-size: 18px;">
           Neuroglancer view
         </div>
         <div class="card-body">
-          <div style="margin-top: 0px;">
-            <div style="display: flex; align-items: center; margin-bottom: 8px;">
-            </div>
-            <iframe id="ng-iframe" src="" width="100%" height="400" style="border:1px solid #ccc; border-radius: 4px;"></iframe>
-          </div>
+          <iframe id="ng-iframe" src="" width="100%" height="400"
+                  style="border:1px solid #ccc; border-radius: 4px;"></iframe>
+        </div>
+      </div>
+
+      <!-- Population Stats -->
+      <div class="card bg-light mb-3" style="margin: 5px;">
+        <div class="card-header" style="color: purple; font-size: 18px;">
+          Population Stats
+        </div>
+        <div class="card-body">
+          <table class="table table-bordered">
+            <thead>
+              <tr><th>Statistic</th><th>Value</th><th>Units</th></tr>
+            </thead>
+            <tbody>
+              {% for key, value in (arbor_stats.items() if arbor_stats is mapping else []) %}
+                {% if not value is iterable or value is string %}
+                  <tr>
+                    <td>{{ key }}</td>
+                    <td>{{ value }}</td>
+                    <td>{{ units[key] }}</td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Selected Cell Stats -->
+      <div class="card bg-light mb-3" style="margin: 5px;">
+        <div class="card-header" style="color: purple; font-size: 18px;">
+          Selected Cell Stats
+        </div>
+        <div class="card-body">
+          <table id="selected-stats-table" class="table table-bordered">
+            <thead>
+              <tr><th>Statistic</th><th>Value</th><th>Units</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -78,44 +120,61 @@ Morpho-Typer
 <script>
 document.addEventListener('DOMContentLoaded', async function() {
   const rows = document.querySelectorAll('.skeleton-row');
-  // Get all seg_ids from the table (from data-segid attributes)
-  const segids = Array.from(rows).map(r => r.getAttribute('data-segid'));
-  const ngFrame = document.querySelector('#ng-iframe');
-  // Set initial selection to the first segid (if any)
-  if (segids.length > 0 && ngFrame) {
+  const segids = Array.from(rows).map(r => r.dataset.segid);
+  const ngFrame = document.getElementById('ng-iframe');
+
+  // initial Neuroglancer load
+  if (segids.length && ngFrame) {
+    const params = new URLSearchParams();
+    segids.forEach(id => params.append('segids', id));
+    params.append('selected', segids[0]);
     try {
-      const params = new URLSearchParams();
-      segids.forEach(id => params.append('segids', id));
-      params.append('selected', segids[0]);
-      const response = await fetch(`/app/neuroglancer_url?${params.toString()}`);
-      const data = await response.json();
-      if (data.url) {
-        ngFrame.src = data.url;
-      }
+      const res = await fetch(`/app/neuroglancer_url?${params.toString()}`);
+      const data = await res.json();
+      if (data.url) ngFrame.src = data.url;
     } catch (e) {
-      console.error('Failed to fetch initial Neuroglancer URL:', e);
+      console.error(e);
     }
   }
-  let lastNgUrl = ngFrame ? ngFrame.src : '';
+
   rows.forEach(row => {
-    row.addEventListener('click', async function() {
+    row.addEventListener('click', async () => {
       rows.forEach(r => r.style.backgroundColor = '');
-      this.style.backgroundColor = '#e0d7f7';
-      const segid = this.getAttribute('data-segid');
-      if (ngFrame) {
-        try {
-          const params = new URLSearchParams();
-          segids.forEach(id => params.append('segids', id));
-          params.append('selected', segid);
-          const response = await fetch(`/app/neuroglancer_url?${params.toString()}`);
-          const data = await response.json();
-          if (data.url) {
-            ngFrame.src = data.url;
-            lastNgUrl = data.url;
-          }
-        } catch (e) {
-          console.error('Failed to fetch Neuroglancer URL:', e);
-        }
+      row.style.backgroundColor = '#e0d7f7';
+      const segid = row.dataset.segid;
+
+      // update Neuroglancer
+      const params = new URLSearchParams();
+      segids.forEach(id => params.append('segids', id));
+      params.append('selected', segid);
+      try {
+        const res = await fetch(`/app/neuroglancer_url?${params.toString()}`);
+        const d = await res.json();
+        if (d.url) ngFrame.src = d.url;
+      } catch (e) {
+        console.error(e);
+      }
+
+      // fetch and populate Selected Cell Stats
+      try {
+        const res = await fetch(`/app/arbor_stats/${segid}`);
+        const { stats, units } = await res.json();
+        const tbody = document.querySelector('#selected-stats-table tbody');
+        tbody.innerHTML = '';
+        Object.entries(stats).forEach(([key, value]) => {
+          if (Array.isArray(value)) return;
+          const tr = document.createElement('tr');
+          ['td', 'td', 'td'].forEach((tag, i) => {
+            const cell = document.createElement(tag);
+            if (i === 0) cell.textContent = key;
+            if (i === 1) cell.textContent = value;
+            if (i === 2) cell.textContent = units[key] || '';
+            tr.appendChild(cell);
+          });
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.error('Stats fetch error', e);
       }
     });
   });
