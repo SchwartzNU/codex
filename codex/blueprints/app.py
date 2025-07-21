@@ -2,6 +2,7 @@ import json
 import os
 import re
 import base64
+import math
 from datetime import datetime
 
 from flask import (
@@ -64,9 +65,10 @@ from codex.utils.graph_algos import distance_matrix
 
 from codex.utils.pathway_vis import pathway_chart_data_rows
 from codex.utils.thumbnails import url_for_skeleton
-from codex.utils.gsheets import seg_ids_matching_gsheet
+from codex.utils.gsheets import seg_ids_and_soma_pos_matching_gsheet
 from codex import logger
 from codex.utils.arbor_stats import load_swc, arborStatsFromSkeleton
+from codex.utils.position_stats import compute_vdri, compute_nnri
 
 app = Blueprint("app", __name__, url_prefix="/app")
 
@@ -187,7 +189,7 @@ def render_morpho_typer_neuron_list(
 ):
     if f_type_string:   # If f_type_string is provided, it will be used to filter neurons
         f_type_string = f_type_string.strip()
-        seg_ids = seg_ids_matching_gsheet(
+        seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet(
             search_string=f_type_string,
             gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
             user_id="gregs_eyewire2",
@@ -195,7 +197,7 @@ def render_morpho_typer_neuron_list(
         )
     elif m_type_string:    # If m_type_string is provided, it will be used to filter neurons
         m_type_string = m_type_string.strip()
-        seg_ids = seg_ids_matching_gsheet(
+        seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet(
             search_string=f_type_string,
             gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
             user_id="gregs_eyewire2",
@@ -203,8 +205,10 @@ def render_morpho_typer_neuron_list(
         )
     elif seg_ids_string:
         seg_ids = [int(sid.strip()) for sid in seg_ids_string.split(",") if sid.strip().isdigit()]
+        soma_pos = None
     else:
         seg_ids = []
+        soma_pos = None
     
     logger.info(f"Loading Morpho-Typer for {len(seg_ids)} segment IDs: {seg_ids}")
     skeleton_imgs = []
@@ -235,7 +239,10 @@ def render_morpho_typer_neuron_list(
             stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)  
             arbor_stats.append(stats)
             arbor_stats_units.append(units)
-                        
+
+    # ensure soma_pos is a JSON-serializable list
+    soma_pos_list = soma_pos.tolist() if hasattr(soma_pos, 'tolist') else soma_pos
+
     return render_template(
         "morpho_typer.html",
         skeleton_imgs=skeleton_imgs,
@@ -243,8 +250,10 @@ def render_morpho_typer_neuron_list(
         arbor_stats=arbor_stats,
         units=arbor_stats_units,
         seg_ids=seg_ids,
+        soma_pos=soma_pos_list,
         data_version=data_version,
     )
+
 
 
 # AJAX endpoint to return stats + units for a given segment ID
@@ -282,7 +291,51 @@ def arbor_stats(segid):
         else:
             serializable_stats[key] = val
     stats = serializable_stats
+
+    # Replace NaN floats with None for valid JSON
+    for k, v in stats.items():
+        if isinstance(v, float) and math.isnan(v):
+            stats[k] = None
+
     return jsonify({"stats": stats, "units": units})
+
+
+# AJAX endpoint to compute population-level regularity indices
+@app.route("/population_stats", methods=["POST"])
+def population_stats():
+    """
+    Expects JSON body with {"soma_pos": [[x1, y1], [x2, y2], ...]}.
+    Returns JSON {"vdri": <float or null>, "nnri": <float or null>}.
+    """
+    data = request.get_json(force=True)
+    soma_pos = data.get("soma_pos")
+    if not soma_pos or not isinstance(soma_pos, list):
+        return jsonify({"error": "Missing or invalid soma_pos"}), 400
+
+    import numpy as _np
+    import math
+    # Build numpy array of shape (N,2)
+    coords = _np.array(soma_pos, dtype=float)
+
+    # if fewer than 3 cells, both regularity indices are undefined
+    #Note: GWS: We will need to create a central bounding box for the VDRI and NNRI calculations to make sense
+    #We will also need to comoute the null distributions for these indices
+    #Using the convec hulls from arbor_stats.py, we can compute the dendritic overlap regularity index as 
+    #in Bae et al. That is a better measure of regularity than the VDRI and NNRI
+    if coords.shape[0] < 3:
+        vdri = None
+        nnri = None
+    else:
+        vdri = compute_vdri(coords)
+        nnri = compute_nnri(coords)
+
+    # Replace NaN with None for JSON
+    if isinstance(vdri, float) and math.isnan(vdri):
+        vdri = None
+    if isinstance(nnri, float) and math.isnan(nnri):
+        nnri = None
+
+    return jsonify({"vdri": vdri, "nnri": nnri})
 
 def render_neuron_list(
     data_version,

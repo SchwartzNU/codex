@@ -54,7 +54,7 @@ def arborStatsFromSkeleton(nodes, edges, radii=None):
             'boundary_points', 'polygon_area', 'polygon_area_convex',
             'convexity_index', 'arbor_density',
             'branch_starts', 'branch_ends', 'branch_lens',
-            'branch_range_z', 'branch_len_euc', 'branch_angles',
+            'branch_len_euc', 'branch_angles',
             'branch_tortuosity', 'Nbranches', 'arbor_complexity'
         }
     """
@@ -90,7 +90,6 @@ def arborStatsFromSkeleton(nodes, edges, radii=None):
     branch_starts = []
     branch_ends = []
     branch_lens = []
-    branch_range_z = []
     branch_len_euc = []
     branch_angles = []
     cur_len = 0.0
@@ -108,8 +107,6 @@ def arborStatsFromSkeleton(nodes, edges, radii=None):
                 branch_ends.append(branch_end)
                 cur_len += np.linalg.norm(prev_point - branch_end)
                 branch_lens.append(cur_len)
-                zr = np.max(curZ) - np.min(curZ) if curZ else 0.0
-                branch_range_z.append(zr)
                 start = branch_starts[b]
                 branch_len_euc.append(np.linalg.norm(branch_end - start))
             if i == num_edges - 1:
@@ -157,12 +154,10 @@ def arborStatsFromSkeleton(nodes, edges, radii=None):
 
     # Compute medians of per-branch statistics
     branch_lens_median = np.median(branch_lens) if branch_lens else np.nan
-    branch_range_z_median = np.median(branch_range_z) if branch_range_z else np.nan
     branch_angles_median = np.median(branch_angles) if branch_angles else np.nan
-    branch_tortuosity_median = np.median(branch_tortuosity) if branch_tortuosity else np.nan
+    branch_tortuosity_median = np.nanmedian(branch_tortuosity) if branch_tortuosity else np.nan
 
     stats = {
-        'num_nodes': num_nodes,
         'num_edges': num_edges,
         'total_length': total_length,
         'radii_median': radii_median,
@@ -171,34 +166,36 @@ def arborStatsFromSkeleton(nodes, edges, radii=None):
         'convexity_index': convexity_index,
         'arbor_density': arbor_density,
         'branch_lens': np.array(branch_lens),
-        'branch_range_z': np.array(branch_range_z),
         'branch_angles': np.array(branch_angles),
         'branch_tortuosity': np.array(branch_tortuosity),
         'branch_lens_median': branch_lens_median,
-        'branch_range_z_median': branch_range_z_median,
         'branch_angles_median': branch_angles_median,
         'branch_tortuosity_median': branch_tortuosity_median,
         'Nbranches': Nbranches,
         'arbor_complexity': arbor_complexity
     }
     units = {
-        'num_nodes': None,
-        'num_edges': None,
+        'num_edges': 'count',
         'total_length': 'µm',
         'radii_median': 'µm',
         'polygon_area': 'μm^2',
         'convexity_index': None,
         'arbor_density': 'branches/μm^2',
         'branch_lens': 'µm',
-        'branch_range_z': 'µm',
         'branch_angles': 'degrees',
         'branch_tortuosity': None,
         'branch_lens_median': 'μm',
-        'branch_range_z_median': 'μm',
         'branch_angles_median': 'degrees',
         'branch_tortuosity_median': None,
         'Nbranches': 'count',
         'arbor_complexity': 'branches/μm'
     }
     print(f"Computed arbor stats: {stats.keys()}")
+    # Round statistics: nearest int for total_length & polygon_area; 3 decimal places for others
+    for k, v in stats.items():
+        if isinstance(v, float):
+            if k in ('total_length', 'polygon_area'):
+                stats[k] = int(round(v))
+            else:
+                stats[k] = round(v, 3)
     return stats, units

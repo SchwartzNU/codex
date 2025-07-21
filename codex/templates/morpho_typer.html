@@ -80,21 +80,11 @@ Morpho-Typer
           Population Stats
         </div>
         <div class="card-body">
-          <table class="table table-bordered">
+          <table id="population-stats-table" class="table table-bordered">
             <thead>
               <tr><th>Statistic</th><th>Value</th><th>Units</th></tr>
             </thead>
-            <tbody>
-              {% for key, value in (arbor_stats.items() if arbor_stats is mapping else []) %}
-                {% if not value is iterable or value is string %}
-                  <tr>
-                    <td>{{ key }}</td>
-                    <td>{{ value }}</td>
-                    <td>{{ units[key] }}</td>
-                  </tr>
-                {% endif %}
-              {% endfor %}
-            </tbody>
+            <tbody></tbody>
           </table>
         </div>
       </div>
@@ -118,7 +108,43 @@ Morpho-Typer
 </div>
 
 <script>
+    // array of soma positions from server-side context
+    const somaPos = {{ soma_pos|tojson }};
+
 document.addEventListener('DOMContentLoaded', async function() {
+  // fetch population-level VDRI & NNRI
+  (async function() {
+          console.log('Posting somaPos to population_stats:', somaPos);
+      try {
+          const resp = await fetch('/app/population_stats', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({soma_pos: somaPos})
+          });
+          const {vdri, nnri} = await resp.json();
+          console.log('Received population stats:', {vdri, nnri});
+          // populate Population Stats table
+          const popTbody = document.querySelector('#population-stats-table tbody');
+          popTbody.innerHTML = '';
+          const entries = [
+              ['# cells', somaPos.length, 'count'],
+              ['VDRI', vdri, ''],
+              ['NNRI', nnri, '']
+          ];
+          entries.forEach(([key, value, unit]) => {
+              const tr = document.createElement('tr');
+              [key, value, unit].forEach(text => {
+                  const td = document.createElement('td');
+                  td.textContent = (text !== null && text !== undefined) ? text : '';
+                  tr.appendChild(td);
+              });
+              popTbody.appendChild(tr);
+          });
+      } catch (err) {
+          console.error('Population stats fetch error', err);
+      }
+  })();
+
   const rows = document.querySelectorAll('.skeleton-row');
   const segids = Array.from(rows).map(r => r.dataset.segid);
   const ngFrame = document.getElementById('ng-iframe');
@@ -139,9 +165,11 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   rows.forEach(row => {
     row.addEventListener('click', async () => {
+      console.log('Row clicked, segid:', row.dataset.segid);
       rows.forEach(r => r.style.backgroundColor = '');
       row.style.backgroundColor = '#e0d7f7';
       const segid = row.dataset.segid;
+      
 
       // update Neuroglancer
       const params = new URLSearchParams();
@@ -157,8 +185,21 @@ document.addEventListener('DOMContentLoaded', async function() {
 
       // fetch and populate Selected Cell Stats
       try {
+        console.log('Fetching stats for segid:', segid);
+        // fetch and parse response as text to debug JSON issues
         const res = await fetch(`/app/arbor_stats/${segid}`);
-        const { stats, units } = await res.json();
+        const text = await res.text();
+        console.log('Raw stats response text:', text);
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (parseErr) {
+            console.error('JSON parse error:', parseErr);
+            return;
+        }
+        const { stats, units } = data;
+        console.log('Parsed stats:', stats);
+        console.log('Parsed units:', units);
         const tbody = document.querySelector('#selected-stats-table tbody');
         tbody.innerHTML = '';
         Object.entries(stats).forEach(([key, value]) => {
