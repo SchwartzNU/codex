@@ -7,12 +7,21 @@ Morpho-Typer
 {% block content %}
 <nav class="navbar navbar-light bg-light">
     <form class="form-inline">
-        <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" autofocus type="search"
-               id="f_type_string" name="f_type_string" placeholder="f-type" aria-label="f_type_input"
-               value="{{ f_type_string }}">
+        <select class="form-control mr-sm-2" style="width: 20vw;" id="f_type_string" name="f_type_string" aria-label="f_type_input">
+            <option value="" {% if not f_type_string %}selected{% endif %}>Cell Type (human)</option>
+            {# Options will be populated dynamically based on Cell Class #}
+        </select>
         <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" type="search"
-               id="m_type_string" name="m_type_string" placeholder="m-type" aria-label="m_type_input"
+               id="m_type_string" name="m_type_string" placeholder="Cell Type (machine)" aria-label="m_type_input"
                value="{{ m_type_string }}">
+        <select class="form-control mr-sm-2" style="width: 12vw;" id="cell_class" name="cell_class" aria-label="cell_class_input">
+            <option value="" {% if not cell_class %}selected{% endif %}>Cell Class</option>
+            <option value="RGC" {% if cell_class == 'RGC' %}selected{% endif %}>RGC</option>
+            <option value="AC" {% if cell_class == 'AC' %}selected{% endif %}>AC</option>
+            <option value="BC" {% if cell_class == 'BC' %}selected{% endif %}>BC</option>
+            <option value="HC" {% if cell_class == 'HC' %}selected{% endif %}>HC</option>
+            <option value="Glia" {% if cell_class == 'Glia' %}selected{% endif %}>Glia</option>
+        </select>
         <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" type="search"
                id="seg_ids_string" name="seg_ids_string" placeholder="seg_ids"
                aria-label="seg_id_input" value="{{ seg_ids_string }}">
@@ -34,6 +43,7 @@ Morpho-Typer
           <table class="table table-striped">
             <thead>
               <tr>
+                <th scope="col">Segment ID</th>
                 <th scope="col">Front/Side View</th>
                 <th scope="col">Stratification</th>
               </tr>
@@ -41,6 +51,12 @@ Morpho-Typer
             <tbody>
               {% for i in range(seg_ids|length) %}
                 <tr class="skeleton-row" data-segid="{{ seg_ids[i] }}" style="cursor:pointer;">
+                  <td style="vertical-align: middle;">
+                    <span class="badge badge-pill badge-light text-dark segid-badge" 
+                          style="font-size: 0.70rem; border: 1px solid #ddd; user-select: text;">
+                      {{ seg_ids[i] }}
+                    </span>
+                  </td>
                   <td>
                     <img src="{{ skeleton_imgs[i] }}" alt="Skeleton {{ seg_ids[i] }}"
                          style="max-height: 120px; border: 1px solid #ccc; border-radius: 3px; margin-right: 10px;">
@@ -110,8 +126,52 @@ Morpho-Typer
 <script>
     // array of soma positions from server-side context
     const somaPos = {{ soma_pos|tojson }};
+    const cellTypesByClass = {{ cell_types_by_class|tojson }};
 
 document.addEventListener('DOMContentLoaded', async function() {
+  // Populate f_type_string options based on cell_class selection
+  function populateHumanTypes(selectedClass, selectedType) {
+    const fTypeSelect = document.getElementById('f_type_string');
+    if (!fTypeSelect) return;
+    // Clear existing options except placeholder
+    fTypeSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Cell Type (human)';
+    fTypeSelect.appendChild(placeholder);
+
+    let types = [];
+    if (selectedClass && cellTypesByClass) {
+      // Try exact match first, then case-insensitive fallback
+      let key = selectedClass;
+      if (!cellTypesByClass[key]) {
+        const found = Object.keys(cellTypesByClass).find(k => k.trim().toLowerCase() === selectedClass.trim().toLowerCase());
+        if (found) key = found;
+      }
+      if (cellTypesByClass[key]) {
+        types = cellTypesByClass[key];
+      }
+    }
+    types.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      if (selectedType && selectedType === t) opt.selected = true;
+      fTypeSelect.appendChild(opt);
+    });
+  }
+
+  const cellClassSel = document.getElementById('cell_class');
+  const initialSelectedClass = cellClassSel ? cellClassSel.value : '';
+  const initialSelectedType = {{ f_type_string|tojson }};
+  populateHumanTypes(initialSelectedClass, initialSelectedType);
+
+  if (cellClassSel) {
+    cellClassSel.addEventListener('change', () => {
+      populateHumanTypes(cellClassSel.value, '');
+    });
+  }
+
   // fetch population-level VDRI & NNRI
   (async function() {
           console.log('Posting somaPos to population_stats:', somaPos);
@@ -218,6 +278,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         console.error('Stats fetch error', e);
       }
     });
+  });
+  // Allow copying segment ID without triggering row click
+  document.querySelectorAll('.segid-badge').forEach(el => {
+    el.addEventListener('click', ev => ev.stopPropagation());
+    el.addEventListener('mousedown', ev => ev.stopPropagation());
   });
 });
 </script>

@@ -65,7 +65,11 @@ from codex.utils.graph_algos import distance_matrix
 
 from codex.utils.pathway_vis import pathway_chart_data_rows
 from codex.utils.thumbnails import url_for_skeleton
-from codex.utils.gsheets import seg_ids_and_soma_pos_matching_gsheet
+from codex.utils.gsheets import (
+    seg_ids_and_soma_pos_matching_gsheet,
+    seg_ids_and_soma_pos_matching_gsheet_multi,
+    cell_types_by_class_map,
+)
 from codex import logger
 from codex.utils.arbor_stats import load_swc, arborStatsFromSkeleton
 from codex.utils.position_stats import compute_vdri, compute_nnri
@@ -171,39 +175,44 @@ def explore():
 def morpho_typer():
     f_type_string = request.args.get("f_type_string", "")
     m_type_string = request.args.get("m_type_string", "")
+    cell_class = request.args.get("cell_class", "")
     seg_ids_string = request.args.get("seg_ids_string", "")
     data_version = "EW2" # Morpho-Typer is only available for EW2 data version for now
     logger.info("Loading Morpho-Typer page")
+
+    # Build mapping from class -> cell types (human) for dependent dropdown
+    ct_map = cell_types_by_class_map(
+        gsheet_id="1o4i53h92oyzsBc8jEWKmF8ZnfyXKXtFCTaYSecs8tBk",
+        user_id="gregs_eyewire2",
+    )
     return render_morpho_typer_neuron_list(
         data_version=data_version,
         f_type_string=f_type_string,
         m_type_string=m_type_string,
+        cell_class=cell_class,
         seg_ids_string=seg_ids_string,
+        cell_types_by_class=ct_map,
     )
 
 def render_morpho_typer_neuron_list(
     data_version,
     f_type_string,
     m_type_string,
-    seg_ids_string
+    cell_class,
+    seg_ids_string,
+    cell_types_by_class
 ):
-    if f_type_string:   # If f_type_string is provided, it will be used to filter neurons
-        f_type_string = f_type_string.strip()
-        seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet(
-            search_string=f_type_string,
-            #gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+    f_type_string = (f_type_string or "").strip()
+    m_type_string = (m_type_string or "").strip()
+    cell_class = (cell_class or "").strip()
+    if f_type_string or m_type_string or cell_class:
+        # Apply AND logic across provided filters
+        seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet_multi(
             gsheet_id="1o4i53h92oyzsBc8jEWKmF8ZnfyXKXtFCTaYSecs8tBk",
             user_id="gregs_eyewire2",
-            column_name="Cell Type",
-        )
-    elif m_type_string:    # If m_type_string is provided, it will be used to filter neurons
-        m_type_string = m_type_string.strip()
-        seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet(
-            search_string=f_type_string,
-            #gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
-            gsheet_id="1o4i53h92oyzsBc8jEWKmF8ZnfyXKXtFCTaYSecs8tBk",
-            user_id="gregs_eyewire2",
-            column_name="Eyewire I name",
+            human_cell_type=f_type_string if f_type_string else None,
+            machine_cell_type=m_type_string if m_type_string else None,
+            cell_class=cell_class if cell_class else None,
         )
     elif seg_ids_string:
         seg_ids = [int(sid.strip()) for sid in seg_ids_string.split(",") if sid.strip().isdigit()]
@@ -245,6 +254,12 @@ def render_morpho_typer_neuron_list(
     # ensure soma_pos is a JSON-serializable list
     soma_pos_list = soma_pos.tolist() if hasattr(soma_pos, 'tolist') else soma_pos
 
+    # Build a comma-separated seg_ids string to populate the input after search
+    if seg_ids:
+        seg_ids_string_out = ",".join(str(s) for s in seg_ids)
+    else:
+        seg_ids_string_out = seg_ids_string or ""
+
     return render_template(
         "morpho_typer.html",
         skeleton_imgs=skeleton_imgs,
@@ -254,6 +269,11 @@ def render_morpho_typer_neuron_list(
         seg_ids=seg_ids,
         soma_pos=soma_pos_list,
         data_version=data_version,
+        f_type_string=f_type_string,
+        m_type_string=m_type_string,
+        cell_class=cell_class,
+        seg_ids_string=seg_ids_string_out,
+        cell_types_by_class=cell_types_by_class,
     )
 
 
