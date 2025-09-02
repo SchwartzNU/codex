@@ -23,12 +23,19 @@ def seg_ids_and_soma_pos_matching_gsheet(search_string,
         list: A list of valid segment IDs (as strings) matching the search criteria.
     """
     url = f"{ENDPOINT}/{gsheet_id}/{user_id}"
+    #url = f"{ENDPOINT}/{gsheet_id}"
+
     data = requests.get(url).json()
+    print(f"Fetched data from Google Sheet: {gsheet_id}")
+    print(data.keys())
+    print(f"Tabs: {list(data.keys())}")
+
     # Load each sheet into a DataFrame
     dfs = { tab: pd.DataFrame(rows) 
         for tab, rows in data.items() }
 
-    T = dfs["Sheet1"]
+    #T = dfs["Sheet1"]
+    T = dfs[list(dfs.keys())[0]]  # Use the first sheet if "Sheet1" not present
     # Use the first row as header
     new_columns = T.iloc[0].tolist()
     T.columns = new_columns

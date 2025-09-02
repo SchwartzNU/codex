@@ -191,15 +191,17 @@ def render_morpho_typer_neuron_list(
         f_type_string = f_type_string.strip()
         seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet(
             search_string=f_type_string,
-            gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+            #gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+            gsheet_id="1o4i53h92oyzsBc8jEWKmF8ZnfyXKXtFCTaYSecs8tBk",
             user_id="gregs_eyewire2",
-            column_name="Common name",
+            column_name="Cell Type",
         )
     elif m_type_string:    # If m_type_string is provided, it will be used to filter neurons
         m_type_string = m_type_string.strip()
         seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet(
             search_string=f_type_string,
-            gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+            #gsheet_id="1PnJ9vyK7T7Z2QThWXJ_K34BbqR7IQrRX9jgTBX32CLY",
+            gsheet_id="1o4i53h92oyzsBc8jEWKmF8ZnfyXKXtFCTaYSecs8tBk",
             user_id="gregs_eyewire2",
             column_name="Eyewire I name",
         )
