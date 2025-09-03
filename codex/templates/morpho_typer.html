@@ -25,6 +25,10 @@ Morpho-Typer
         <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" type="search"
                id="seg_ids_string" name="seg_ids_string" placeholder="seg_ids"
                aria-label="seg_id_input" value="{{ seg_ids_string }}">
+        <div class="form-check form-check-inline" style="margin-right: 10px;">
+          <input class="form-check-input" type="checkbox" id="stats_enabled" name="stats_enabled" value="1" {% if stats_enabled %}checked{% endif %}>
+          <label class="form-check-label" for="stats_enabled">Show Stats</label>
+        </div>
         <button class="btn btn-primary my-2 my-sm-0" type="submit">
             <i class="fa-solid fa-magnifying-glass"></i>
         </button>
@@ -85,7 +89,27 @@ Morpho-Typer
           Neuroglancer view
         </div>
         <div class="card-body">
+          <div id="ng-share-feedback" class="alert py-1 px-2" role="alert" style="display:none; margin-bottom: 6px;"></div>
+          <div class="d-flex justify-content-end" style="margin-bottom: 6px; gap: 6px;">
+            <button id="btn-open-ng" class="btn btn-sm btn-outline-primary" disabled>Open Viewer</button>
+            <button id="btn-short-ng" class="btn btn-sm btn-outline-success" disabled>Shorten + Copy</button>
+            <div class="input-group input-group-sm" style="width: auto;">
+              <div class="input-group-prepend">
+                <label class="input-group-text" for="export-format">Export</label>
+              </div>
+              <select id="export-format" class="custom-select">
+                <option value="csv" selected>.csv</option>
+                <option value="pickle">.pkl (pickle)</option>
+                <option value="mat">.mat (MATLAB)</option>
+                <option value="h5">.h5 (HDF5)</option>
+              </select>
+              <div class="input-group-append">
+                <button id="btn-export" class="btn btn-sm btn-outline-secondary" disabled>Export Data Table</button>
+              </div>
+            </div>
+          </div>
           <iframe id="ng-iframe" src="" width="100%" height="400"
+                  allow="clipboard-read; clipboard-write; fullscreen"
                   style="border:1px solid #ccc; border-radius: 4px;"></iframe>
         </div>
       </div>
@@ -106,7 +130,7 @@ Morpho-Typer
       </div>
 
       <!-- Selected Cell Stats -->
-      <div class="card bg-light mb-3" style="margin: 5px;">
+      <div id="selected-stats-card" class="card bg-light mb-3" style="margin: 5px;{% if not stats_enabled %} display: none;{% endif %}">
         <div class="card-header" style="color: purple; font-size: 18px;">
           Selected Cell Stats
         </div>
@@ -127,7 +151,6 @@ Morpho-Typer
     // array of soma positions from server-side context
     const somaPos = {{ soma_pos|tojson }};
     const cellTypesByClass = {{ cell_types_by_class|tojson }};
-
 document.addEventListener('DOMContentLoaded', async function() {
   // Populate f_type_string options based on cell_class selection
   function populateHumanTypes(selectedClass, selectedType) {
@@ -172,42 +195,64 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
   }
 
-  // fetch population-level VDRI & NNRI
-  (async function() {
-          console.log('Posting somaPos to population_stats:', somaPos);
-      try {
-          const resp = await fetch('/app/population_stats', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({soma_pos: somaPos})
-          });
-          const {vdri, nnri} = await resp.json();
-          console.log('Received population stats:', {vdri, nnri});
-          // populate Population Stats table
-          const popTbody = document.querySelector('#population-stats-table tbody');
-          popTbody.innerHTML = '';
-          const entries = [
-              ['# cells', somaPos.length, 'count'],
-              ['VDRI', vdri, ''],
-              ['NNRI', nnri, '']
-          ];
-          entries.forEach(([key, value, unit]) => {
-              const tr = document.createElement('tr');
-              [key, value, unit].forEach(text => {
-                  const td = document.createElement('td');
-                  td.textContent = (text !== null && text !== undefined) ? text : '';
-                  tr.appendChild(td);
-              });
-              popTbody.appendChild(tr);
-          });
-      } catch (err) {
-          console.error('Population stats fetch error', err);
-      }
-  })();
+  async function renderPopulationStats(doIndices) {
+    const popTbody = document.querySelector('#population-stats-table tbody');
+    popTbody.innerHTML = '';
+    // Prefer somaPos count; fallback to number of rendered segids
+    const count = (Array.isArray(somaPos) && somaPos.length ? somaPos.length : (typeof segids !== 'undefined' ? segids.length : 0));
+    // Always show # cells
+    const trCount = document.createElement('tr');
+    ["# cells", count, 'count'].forEach(text => {
+      const td = document.createElement('td');
+      td.textContent = (text !== null && text !== undefined) ? text : '';
+      trCount.appendChild(td);
+    });
+    popTbody.appendChild(trCount);
+    if (!doIndices || !somaPos || !Array.isArray(somaPos) || somaPos.length === 0) return;
+    try {
+      const resp = await fetch('/app/population_stats', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({soma_pos: somaPos})
+      });
+      const {vdri, nnri} = await resp.json();
+      [["VDRI", vdri, ''], ["NNRI", nnri, '']].forEach(([k, v, u]) => {
+        const tr = document.createElement('tr');
+        [k, v, u].forEach(text => {
+          const td = document.createElement('td');
+          td.textContent = (text !== null && text !== undefined) ? text : '';
+          tr.appendChild(td);
+        });
+        popTbody.appendChild(tr);
+      });
+    } catch (err) {
+      console.error('Population stats fetch error', err);
+    }
+  }
 
   const rows = document.querySelectorAll('.skeleton-row');
   const segids = Array.from(rows).map(r => r.dataset.segid);
   const ngFrame = document.getElementById('ng-iframe');
+  const statsCheckbox = document.getElementById('stats_enabled');
+  let latestNgUrl = '';
+
+  // Always render population count; add indices only if enabled
+  await renderPopulationStats(statsCheckbox ? statsCheckbox.checked : false);
+
+  if (statsCheckbox) {
+    statsCheckbox.addEventListener('change', async () => {
+      // Toggle selected stats card visibility
+      const selCard = document.getElementById('selected-stats-card');
+      if (selCard) selCard.style.display = statsCheckbox.checked ? '' : 'none';
+      // Re-render population stats accordingly
+      await renderPopulationStats(statsCheckbox.checked);
+      // Clear selected stats table when disabling
+      if (!statsCheckbox.checked) {
+        const tbody = document.querySelector('#selected-stats-table tbody');
+        if (tbody) tbody.innerHTML = '';
+      }
+    });
+  }
 
   // initial Neuroglancer load
   if (segids.length && ngFrame) {
@@ -215,9 +260,31 @@ document.addEventListener('DOMContentLoaded', async function() {
     segids.forEach(id => params.append('segids', id));
     params.append('selected', segids[0]);
     try {
-      const res = await fetch(`/app/neuroglancer_url?${params.toString()}`);
-      const data = await res.json();
-      if (data.url) ngFrame.src = data.url;
+      // Prefer server-side short URL; always try long URL fallback to ensure update
+      let gotShort = false;
+      try {
+        const shortRes = await fetch(`/app/neuroglancer_shorten?${params.toString()}`);
+        const shortData = await shortRes.json();
+        if (shortRes.ok && shortData.short_url) {
+          latestNgUrl = shortData.short_url;
+          ngFrame.src = latestNgUrl;
+          gotShort = true;
+        }
+      } catch (e) {
+        console.warn('Server shorten failed:', e);
+      }
+      // Always fetch long URL as reliable fallback
+      try {
+        const res = await fetch(`/app/neuroglancer_url?${params.toString()}`);
+        const data = await res.json();
+        if (data.url) {
+          latestNgUrl = data.url;
+          if (!gotShort) ngFrame.src = data.url;
+        }
+      } catch (e) {
+        console.warn('Long URL fetch failed:', e);
+      }
+      enableNgButtons();
     } catch (e) {
       console.error(e);
     }
@@ -236,46 +303,69 @@ document.addEventListener('DOMContentLoaded', async function() {
       segids.forEach(id => params.append('segids', id));
       params.append('selected', segid);
       try {
+      // Prefer server-side short URL; always try long URL fallback to ensure update
+      let gotShort = false;
+      try {
+        const shortRes = await fetch(`/app/neuroglancer_shorten?${params.toString()}`);
+        const shortData = await shortRes.json();
+        if (shortRes.ok && shortData.short_url) {
+          latestNgUrl = shortData.short_url;
+          ngFrame.src = latestNgUrl;
+          gotShort = true;
+        }
+      } catch (e) {
+        console.warn('Server shorten failed:', e);
+      }
+      // Always fetch long URL as reliable fallback
+      try {
         const res = await fetch(`/app/neuroglancer_url?${params.toString()}`);
         const d = await res.json();
-        if (d.url) ngFrame.src = d.url;
+        if (d.url) {
+          console.log('Neuroglancer URL:', d.url);
+          latestNgUrl = d.url;
+          if (!gotShort) ngFrame.src = d.url;
+        }
+      } catch (e) {
+        console.warn('Long URL fetch failed:', e);
+      }
+      enableNgButtons();
       } catch (e) {
         console.error(e);
       }
 
-      // fetch and populate Selected Cell Stats
-      try {
-        console.log('Fetching stats for segid:', segid);
-        // fetch and parse response as text to debug JSON issues
-        const res = await fetch(`/app/arbor_stats/${segid}`);
-        const text = await res.text();
-        console.log('Raw stats response text:', text);
-        let data;
+      // fetch and populate Selected Cell Stats (only if enabled)
+      const tbody = document.querySelector('#selected-stats-table tbody');
+      if (tbody) tbody.innerHTML = '';
+      if (statsCheckbox && statsCheckbox.checked) {
         try {
-            data = JSON.parse(text);
-        } catch (parseErr) {
-            console.error('JSON parse error:', parseErr);
-            return;
-        }
-        const { stats, units } = data;
-        console.log('Parsed stats:', stats);
-        console.log('Parsed units:', units);
-        const tbody = document.querySelector('#selected-stats-table tbody');
-        tbody.innerHTML = '';
-        Object.entries(stats).forEach(([key, value]) => {
-          if (Array.isArray(value)) return;
-          const tr = document.createElement('tr');
-          ['td', 'td', 'td'].forEach((tag, i) => {
-            const cell = document.createElement(tag);
-            if (i === 0) cell.textContent = key;
-            if (i === 1) cell.textContent = value;
-            if (i === 2) cell.textContent = units[key] || '';
-            tr.appendChild(cell);
+          console.log('Fetching stats for segid:', segid);
+          const res = await fetch(`/app/arbor_stats/${segid}`);
+          const text = await res.text();
+          let data;
+          try {
+              data = JSON.parse(text);
+          } catch (parseErr) {
+              console.error('JSON parse error:', parseErr);
+              return;
+          }
+          const { stats, units } = data;
+          const tbody2 = document.querySelector('#selected-stats-table tbody');
+          tbody2.innerHTML = '';
+          Object.entries(stats).forEach(([key, value]) => {
+            if (Array.isArray(value)) return;
+            const tr = document.createElement('tr');
+            ['td', 'td', 'td'].forEach((tag, i) => {
+              const cell = document.createElement(tag);
+              if (i === 0) cell.textContent = key;
+              if (i === 1) cell.textContent = value;
+              if (i === 2) cell.textContent = units[key] || '';
+              tr.appendChild(cell);
+            });
+            tbody2.appendChild(tr);
           });
-          tbody.appendChild(tr);
-        });
-      } catch (e) {
-        console.error('Stats fetch error', e);
+        } catch (e) {
+          console.error('Stats fetch error', e);
+        }
       }
     });
   });
@@ -283,6 +373,103 @@ document.addEventListener('DOMContentLoaded', async function() {
   document.querySelectorAll('.segid-badge').forEach(el => {
     el.addEventListener('click', ev => ev.stopPropagation());
     el.addEventListener('mousedown', ev => ev.stopPropagation());
+  });
+
+  // Share toolbar logic
+  function enableNgButtons() {
+    const openBtn = document.getElementById('btn-open-ng');
+    const shortBtn = document.getElementById('btn-short-ng');
+    const exportBtn = document.getElementById('btn-export');
+    [openBtn, shortBtn].forEach(b => b && (b.disabled = !latestNgUrl));
+    if (exportBtn) exportBtn.disabled = !(segids && segids.length);
+  }
+
+  function showNgFeedback(message, level) {
+    const box = document.getElementById('ng-share-feedback');
+    if (!box) return;
+    // reset classes
+    box.classList.remove('alert-success', 'alert-warning', 'alert-danger', 'alert-info');
+    const cls = level === 'success' ? 'alert-success'
+              : level === 'warning' ? 'alert-warning'
+              : level === 'danger' ? 'alert-danger'
+              : 'alert-info';
+    box.classList.add(cls);
+    box.textContent = message;
+    box.style.display = 'block';
+    try { box.scrollIntoView({behavior: 'smooth', block: 'nearest'}); } catch {}
+    clearTimeout(window.__ngShareMsgTimer);
+    window.__ngShareMsgTimer = setTimeout(() => { box.style.display = 'none'; }, 3000);
+  }
+  document.getElementById('btn-open-ng')?.addEventListener('click', () => {
+    if (latestNgUrl) window.open(latestNgUrl, '_blank');
+  });
+  document.getElementById('btn-short-ng')?.addEventListener('click', async () => {
+    if (!segids.length) return;
+    const params = new URLSearchParams();
+    segids.forEach(id => params.append('segids', id));
+    params.append('selected', segids[0]);
+    try {
+      const res = await fetch(`/app/neuroglancer_shorten?${params.toString()}`);
+      let shortUrl = null;
+      let errDetail = '';
+      try {
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const d = await res.json();
+          if (d && d.short_url) shortUrl = d.short_url;
+          else if (d && d.error) errDetail = d.error;
+        } else {
+          const txt = await res.text();
+          errDetail = txt ? txt.slice(0, 140) : '';
+        }
+      } catch (_) {}
+
+      if (res.ok && shortUrl) {
+        const dShort = shortUrl;
+        latestNgUrl = d.short_url;
+        let copied = false;
+        try { await navigator.clipboard.writeText(latestNgUrl); copied = true; } catch (e) { copied = false; }
+        ngFrame.src = latestNgUrl;
+        enableNgButtons();
+        showNgFeedback(copied ? 'Short link copied to clipboard' : 'Short link ready (copy blocked)', copied ? 'success' : 'warning');
+      } else {
+        const msg = `Shorten failed${res.status ? ` (${res.status})` : ''}. Using long URL instead.`;
+        console.warn('Shorten failed:', res.status, errDetail);
+        showNgFeedback(msg, 'danger');
+        // Fetch long URL as immediate fallback and keep UX responsive
+        try {
+          const res2 = await fetch(`/app/neuroglancer_url?${params.toString()}`);
+          const d2 = await res2.json();
+          if (d2 && d2.url) {
+            latestNgUrl = d2.url;
+            ngFrame.src = latestNgUrl;
+            enableNgButtons();
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      console.error('Shorten failed', e);
+      showNgFeedback('Shorten failed due to a network error.', 'danger');
+    }
+  });
+
+  // Export data table
+  document.getElementById('btn-export')?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    if (!(segids && segids.length)) return;
+    const fmtSel = document.getElementById('export-format');
+    const fmt = fmtSel ? fmtSel.value : 'csv';
+    const params = new URLSearchParams();
+    segids.forEach(id => params.append('segids', id));
+    params.append('format', fmt);
+    const url = `/app/export_arbor_stats?${params.toString()}`;
+    // Trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   });
 });
 </script>

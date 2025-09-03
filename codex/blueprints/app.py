@@ -53,6 +53,7 @@ from codex.service.network import compile_network_html
 from codex.service.search import DEFAULT_PAGE_SIZE, pagination_data
 from codex.service.stats import leaderboard_cached, stats_cached
 from codex.utils import nglui
+from codex.utils.nglui import ew2_config_dict, url_for_ew2_segments, shorten_ew2_state, NGL_EW2_BASE_URL
 from codex.utils.formatting import (
     can_be_flywire_root_id,
     display,
@@ -177,6 +178,11 @@ def morpho_typer():
     m_type_string = request.args.get("m_type_string", "")
     cell_class = request.args.get("cell_class", "")
     seg_ids_string = request.args.get("seg_ids_string", "")
+    stats_enabled = request.args.get("stats_enabled", "0")
+    try:
+        stats_enabled = bool(int(stats_enabled))
+    except Exception:
+        stats_enabled = True
     data_version = "EW2" # Morpho-Typer is only available for EW2 data version for now
     logger.info("Loading Morpho-Typer page")
 
@@ -192,6 +198,7 @@ def morpho_typer():
         cell_class=cell_class,
         seg_ids_string=seg_ids_string,
         cell_types_by_class=ct_map,
+        stats_enabled=stats_enabled,
     )
 
 def render_morpho_typer_neuron_list(
@@ -200,7 +207,8 @@ def render_morpho_typer_neuron_list(
     m_type_string,
     cell_class,
     seg_ids_string,
-    cell_types_by_class
+    cell_types_by_class,
+    stats_enabled
 ):
     f_type_string = (f_type_string or "").strip()
     m_type_string = (m_type_string or "").strip()
@@ -242,14 +250,16 @@ def render_morpho_typer_neuron_list(
                 strat_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
         else:
             strat_imgs.append(None)
-        swc_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.swc"
-        if os.path.exists(swc_path):
-            logger.info(f"Loading SWC for segment {seg_id} from {swc_path}")
-            coords, radii, edges = load_swc(swc_path)
-            logger.info(f"Computing arbor stats for segment {seg_id}")
-            stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)  
-            arbor_stats.append(stats)
-            arbor_stats_units.append(units)
+        # Only compute per-cell arbor stats if stats are enabled
+        if stats_enabled:
+            swc_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.swc"
+            if os.path.exists(swc_path):
+                logger.info(f"Loading SWC for segment {seg_id} from {swc_path}")
+                coords, radii, edges = load_swc(swc_path)
+                logger.info(f"Computing arbor stats for segment {seg_id}")
+                stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)
+                arbor_stats.append(stats)
+                arbor_stats_units.append(units)
 
     # ensure soma_pos is a JSON-serializable list
     soma_pos_list = soma_pos.tolist() if hasattr(soma_pos, 'tolist') else soma_pos
@@ -274,6 +284,7 @@ def render_morpho_typer_neuron_list(
         cell_class=cell_class,
         seg_ids_string=seg_ids_string_out,
         cell_types_by_class=cell_types_by_class,
+        stats_enabled=stats_enabled,
     )
 
 
@@ -358,6 +369,172 @@ def population_stats():
         nnri = None
 
     return jsonify({"vdri": vdri, "nnri": nnri})
+
+
+@app.route("/export_arbor_stats")
+def export_arbor_stats():
+    """
+    Export arbor stats for a list of segment IDs as a data table.
+    Query params:
+      - segids: repeated query param for each segment id
+      - format: one of csv, pickle, mat, h5
+    Returns a downloadable file with columns: segmentID + per-cell stats keys.
+    Missing/unavailable stats are filled with NaN.
+    """
+    import io
+    import numpy as _np
+    import pandas as _pd
+
+    segids = request.args.getlist("segids")
+    fmt = request.args.get("format", "csv").lower()
+    try:
+        segids = [int(s) for s in segids if str(s).isdigit()]
+    except Exception:
+        return jsonify({"error": "Invalid segids"}), 400
+    if not segids:
+        return jsonify({"error": "No segids provided"}), 400
+
+    DATA_ROOT_PATH = "static/data"
+    stats_per_cell = {}
+    all_keys = set()
+
+    for sid in segids:
+        swc_path = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid), "skeleton_warped.swc")
+        if os.path.exists(swc_path):
+            try:
+                coords, radii, edges = load_swc(swc_path)
+                stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)
+                # filter out array-valued stats and convert numpy scalars
+                row = {}
+                for k, v in stats.items():
+                    if isinstance(v, _np.ndarray):
+                        continue
+                    if isinstance(v, _np.generic):
+                        v = v.item()
+                    row[k] = v
+                stats_per_cell[sid] = row
+                all_keys.update(row.keys())
+            except Exception as e:
+                logger.warning(f"Failed to compute stats for {sid}: {e}")
+                stats_per_cell[sid] = None
+        else:
+            stats_per_cell[sid] = None
+
+    # Build DataFrame with NaN for missing
+    columns = ["segmentID"] + sorted(all_keys)
+    records = []
+    for sid in segids:
+        base = {"segmentID": sid}
+        if stats_per_cell[sid] is None:
+            for k in all_keys:
+                base[k] = _np.nan
+        else:
+            for k in all_keys:
+                val = stats_per_cell[sid].get(k, _np.nan)
+                # Normalize NaN for invalid floats
+                if isinstance(val, float) and math.isnan(val):
+                    val = _np.nan
+                base[k] = val
+        records.append(base)
+    df = _pd.DataFrame.from_records(records, columns=columns)
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    base_name = f"arbor_stats_{ts}"
+
+    if fmt == "csv":
+        buf = io.StringIO()
+        df.to_csv(buf, index=False)
+        data = buf.getvalue().encode("utf-8")
+        mime = "text/csv"
+        filename = f"{base_name}.csv"
+    elif fmt in ("pickle", "pkl", "p"):  # pickle DataFrame
+        buf = io.BytesIO()
+        df.to_pickle(buf)
+        data = buf.getvalue()
+        mime = "application/octet-stream"
+        filename = f"{base_name}.pkl"
+    elif fmt in ("mat", ".mat"):
+        try:
+            from scipy.io import savemat as _savemat
+        except Exception:
+            return jsonify({"error": "scipy is required for .mat export"}), 400
+        # Save as a struct of arrays named 'table'
+        to_save = {col: _np.asarray(df[col].values) for col in df.columns}
+        buf = io.BytesIO()
+        _savemat(buf, {"table": to_save}, do_compression=True)
+        data = buf.getvalue()
+        mime = "application/octet-stream"
+        filename = f"{base_name}.mat"
+    elif fmt in ("h5", "hdf5", "hdf"):
+        # Write HDF5 with a group per segment id: /segid_{id}/{stat_key}
+        try:
+            import h5py as _h5
+        except Exception as e:
+            logger.warning(f"h5py import failed: {e}")
+            return jsonify({"error": f"h5py is required for .h5 export (import failed: {e})"}), 400
+        import tempfile as _tempfile
+        tmp = _tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        try:
+            with _h5.File(tmp_path, "w") as h5f:
+                # store a sorted list of keys at root for reference
+                keys_ds = _h5.special_dtype(vlen=str)
+                try:
+                    h5f.create_dataset("stat_keys", data=_np.array(sorted(all_keys), dtype=keys_ds))
+                except Exception:
+                    pass
+                for sid in segids:
+                    grp = h5f.create_group(f"segid_{sid}")
+                    row = stats_per_cell.get(sid)
+                    for k in sorted(all_keys):
+                        # default NaN
+                        v = _np.nan
+                        if row is not None:
+                            v = row.get(k, _np.nan)
+                        # normalize types for HDF5
+                        ds = None
+                        try:
+                            # booleans -> int
+                            if isinstance(v, (bool,)):
+                                v = int(v)
+                            # numpy scalar -> python
+                            if isinstance(v, _np.generic):
+                                v = v.item()
+                            # try float
+                            valf = float(v) if v is not None else _np.nan
+                            if _np.isnan(valf):
+                                ds = _np.array(_np.nan, dtype=_np.float64)
+                            else:
+                                ds = _np.array(valf, dtype=_np.float64)
+                            grp.create_dataset(k, data=ds)
+                        except Exception:
+                            # fallback to UTF-8 string
+                            try:
+                                sdt = _h5.string_dtype(encoding='utf-8')
+                                grp.create_dataset(k, data=_np.array(str(v), dtype=sdt))
+                            except Exception:
+                                # last resort: skip this field
+                                continue
+            with open(tmp_path, "rb") as f:
+                data = f.read()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        mime = "application/octet-stream"
+        filename = f"{base_name}.h5"
+    else:
+        return jsonify({"error": "Unsupported format"}), 400
+
+    return Response(
+        data,
+        headers={
+            "Content-Type": mime,
+            "Content-Disposition": f"attachment; filename=\"{filename}\"",
+        },
+    )
 
 def render_neuron_list(
     data_version,
@@ -1260,76 +1437,125 @@ def motifs():
 def neuroglancer_url():
     """
     Returns a Neuroglancer state URL for a given seg_id (or list of seg_ids), with the selected one optionally highlighted.
-    Only supports the EW2 (stroeh_sem_mouse_retina) dataset.
+    Only supports the EW2 (stroeh_mouse_retina) dataset.
+    Delegates state construction to codex.utils.nglui to keep style elements centralized.
     """
-    import urllib.parse
     segids = request.args.getlist("segids")
     selected = request.args.get("selected")
     highlight_color = request.args.get("highlight_color", "#29ff29")
 
-    # Optional view parameters
+    # Optional view parameters (pass-through if provided)
     position = request.args.get("position")
     cross_section_scale = request.args.get("crossSectionScale")
     projection_orientation = request.args.get("projectionOrientation")
     projection_scale = request.args.get("projectionScale")
     projection_depth = request.args.get("projectionDepth")
 
-    # Parse segids as ints
+    # Parse inputs
     try:
         segids = [int(s) for s in segids if str(s).isdigit()]
     except Exception:
         return {"error": "Invalid segids"}, 400
+    try:
+        selected_int = int(selected) if selected and str(selected).isdigit() else None
+    except Exception:
+        selected_int = None
 
-    # Build layer colors
-    if segids:
-        selected_str = str(selected) if selected else str(segids[0])
-        segment_colors = {
-            str(sid): (highlight_color if str(sid) == selected_str else "#ffffff")
-            for sid in segids
-        }
-    else:
-        segment_colors = {}
+    # Convert JSON-like strings to Python for complex params if supplied
+    import json as _json
+    def _parse_or_none(val):
+        if val is None:
+            return None
+        try:
+            return _json.loads(val)
+        except Exception:
+            return None
 
-    # Construct full Neuroglancer state
-    config = {
-        "dimensions": {"x": [1.6e-8, "m"], "y": [1.6e-8, "m"], "z": [4e-8, "m"]},
-        "position": [41516.5, 41555.5, 838.5],
-        "crossSectionScale": 0.45099710384944064,
-        "projectionOrientation": [1, 0, 0, 0],
-        "projectionScale": 83820.52470573061,
-        "projectionDepth": -75.71853703460232,
-        "layers": [
-            {
-                "type": "image",
-                "source": "precomputed://gs://stroeh_sem_mouse_retina/image/v2",
-                "tab": "source",
-                "name": "img",
-            },
-            {
-                "type": "segmentation",
-                "source": {
-                    "url": "graphene://middleauth+https://minnie.microns-daf.com/segmentation/table/stroeh_mouse_retina",
-                    "state": {
-                        "multicut": {"sinks": [], "sources": []},
-                        "merge": {"merges": []},
-                        "findPath": {},
-                    },
-                },
-                "tab": "segments",
-                "annotationColor": "#ffffff",
-                "segments": [str(sid) for sid in segids],
-                "colorSeed": 225267639,
-                "segmentColors": segment_colors,
-                "name": "stroeh_mouse_retina",
-            },
-        ],
-        "showSlices": False,
-        "gpuMemoryLimit": 4000000000,
-        "systemMemoryLimit": 8000000000,
-        "selectedLayer": {"layer": "stroeh_mouse_retina"},
-        "layout": {"type": "3d", "orthographicProjection": True},
-        "jsonStateServer": "https://global.daf-apis.com/nglstate/api/v1/post",
-    }
+    position_val = _parse_or_none(position)
+    proj_orient_val = _parse_or_none(projection_orientation)
 
-    url = f"https://spelunker.cave-explorer.org/#!{urllib.parse.quote(json.dumps(config))}"
+    # cross_section_scale, projection_scale, projection_depth are floats
+    def _to_float(v):
+        try:
+            return float(v) if v is not None else None
+        except Exception:
+            return None
+    cross_section_val = _to_float(cross_section_scale)
+    proj_scale_val = _to_float(projection_scale)
+    proj_depth_val = _to_float(projection_depth)
+
+    url = url_for_ew2_segments(
+        segment_ids=segids,
+        selected=selected_int,
+        highlight_color=highlight_color,
+        position=position_val,
+        cross_section_scale=cross_section_val,
+        projection_orientation=proj_orient_val,
+        projection_scale=proj_scale_val,
+        projection_depth=proj_depth_val,
+    )
+    logger.info(f"Returning Neuroglancer URL: {url}")
     return {"url": url}
+
+
+@app.route("/neuroglancer_shorten")
+def neuroglancer_shorten():
+    """
+    Build the EW2 Neuroglancer state (same params as /neuroglancer_url) and shorten it
+    via the configured jsonStateServer. Returns {"short_url": str}.
+    """
+    segids = request.args.getlist("segids")
+    selected = request.args.get("selected")
+    highlight_color = request.args.get("highlight_color", "#29ff29")
+
+    position = request.args.get("position")
+    cross_section_scale = request.args.get("crossSectionScale")
+    projection_orientation = request.args.get("projectionOrientation")
+    projection_scale = request.args.get("projectionScale")
+    projection_depth = request.args.get("projectionDepth")
+
+    try:
+        segids = [int(s) for s in segids if str(s).isdigit()]
+    except Exception:
+        return jsonify({"error": "Invalid segids"}), 400
+    selected_int = int(selected) if selected and str(selected).isdigit() else None
+
+    import json as _json
+    def _parse_or_none(val):
+        if val is None:
+            return None
+        try:
+            return _json.loads(val)
+        except Exception:
+            return None
+    position_val = _parse_or_none(position)
+    proj_orient_val = _parse_or_none(projection_orientation)
+    def _to_float(v):
+        try:
+            return float(v) if v is not None else None
+        except Exception:
+            return None
+    cross_section_val = _to_float(cross_section_scale)
+    proj_scale_val = _to_float(projection_scale)
+    proj_depth_val = _to_float(projection_depth)
+
+    cfg = ew2_config_dict(
+        segment_ids=segids,
+        selected=selected_int,
+        highlight_color=highlight_color,
+        position=position_val,
+        cross_section_scale=cross_section_val,
+        projection_orientation=proj_orient_val,
+        projection_scale=proj_scale_val,
+        projection_depth=proj_depth_val,
+    )
+    short = shorten_ew2_state(cfg)
+    if not short:
+        return jsonify({"error": "Shorten failed"}), 502
+    # Normalize to viewer short URL if server returned a state URL
+    if short.startswith("http") and not short.startswith(NGL_EW2_BASE_URL):
+        viewer_url = f"{NGL_EW2_BASE_URL}/#!{short}"
+    else:
+        viewer_url = short
+    logger.info(f"Shortened Neuroglancer URL: {viewer_url}")
+    return jsonify({"short_url": viewer_url})

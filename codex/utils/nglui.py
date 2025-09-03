@@ -2,6 +2,7 @@ import random
 import urllib.parse
 from nglui import statebuilder
 import json
+from typing import Optional
 
 from codex.data.brain_regions import REGIONS, COLORS
 from codex.data.versions import (
@@ -12,6 +13,7 @@ from codex.data.versions import (
 from codex import logger
 
 NGL_FLAT_BASE_URL = "https://ngl.cave-explorer.org"
+NGL_EW2_BASE_URL = "https://spelunker.cave-explorer.org"
 
 
 def url_for_root_ids(
@@ -194,3 +196,138 @@ def url_for_neuropils(segment_ids=None):
     }
 
     return f"{NGL_FLAT_BASE_URL}/#!{urllib.parse.quote(json.dumps(config))}"
+
+
+def ew2_config_dict(
+    segment_ids,
+    selected: Optional[int] = None,
+    highlight_color: str = "#29ff29",
+    position=None,
+    cross_section_scale=None,
+    projection_orientation=None,
+    projection_scale=None,
+    projection_depth=None,
+):
+    """Return EW2 Neuroglancer state as a Python dict."""
+    segment_ids = [int(s) for s in segment_ids]
+    if segment_ids:
+        selected_str = str(selected if selected is not None else segment_ids[0])
+        segment_colors = {
+            str(sid): (highlight_color if str(sid) == selected_str else "#ffffff")
+            for sid in segment_ids
+        }
+    else:
+        segment_colors = {}
+
+    config = {
+        "dimensions": {"x": [1.6e-8, "m"], "y": [1.6e-8, "m"], "z": [4e-8, "m"]},
+        "position": [41516.5, 41555.5, 838.5],
+        "crossSectionScale": 0.45099710384944064,
+        "projectionOrientation": [1, 0, 0, 0],
+        "projectionScale": 83820.52470573061,
+        "projectionDepth": -75.71853703460232,
+        "layers": [
+            {
+                "type": "image",
+                "source": "precomputed://gs://stroeh_sem_mouse_retina/image/v2",
+                "tab": "source",
+                "name": "img",
+            },
+            {
+                "type": "segmentation",
+                "source": {
+                    "url": "graphene://middleauth+https://minnie.microns-daf.com/segmentation/table/stroeh_mouse_retina",
+                    "state": {
+                        "multicut": {"sinks": [], "sources": []},
+                        "merge": {"merges": []},
+                        "findPath": {},
+                    },
+                },
+                "tab": "segments",
+                "annotationColor": "#ffffff",
+                "segments": [str(sid) for sid in segment_ids],
+                "colorSeed": 225267639,
+                "segmentColors": segment_colors,
+                "name": "stroeh_mouse_retina",
+            },
+        ],
+        "showSlices": False,
+        "gpuMemoryLimit": 4000000000,
+        "systemMemoryLimit": 8000000000,
+        "selectedLayer": {"layer": "stroeh_mouse_retina"},
+        "layout": {"type": "3d", "orthographicProjection": True},
+        "jsonStateServer": "https://global.daf-apis.com/nglstate/api/v1/post",
+    }
+
+    # Apply view overrides only if provided
+    if position is not None:
+        config["position"] = position
+    if cross_section_scale is not None:
+        config["crossSectionScale"] = cross_section_scale
+    if projection_orientation is not None:
+        config["projectionOrientation"] = projection_orientation
+    if projection_scale is not None:
+        config["projectionScale"] = projection_scale
+    if projection_depth is not None:
+        config["projectionDepth"] = projection_depth
+
+    return config
+
+
+def url_for_ew2_segments(
+    segment_ids,
+    selected: Optional[int] = None,
+    highlight_color: str = "#29ff29",
+    position=None,
+    cross_section_scale=None,
+    projection_orientation=None,
+    projection_scale=None,
+    projection_depth=None,
+):
+    """Return full viewer URL that encodes the EW2 state in the hash."""
+    config = ew2_config_dict(
+        segment_ids=segment_ids,
+        selected=selected,
+        highlight_color=highlight_color,
+        position=position,
+        cross_section_scale=cross_section_scale,
+        projection_orientation=projection_orientation,
+        projection_scale=projection_scale,
+        projection_depth=projection_depth,
+    )
+    return f"{NGL_EW2_BASE_URL}/#!{urllib.parse.quote(json.dumps(config))}"
+
+
+def shorten_ew2_state(config: dict) -> Optional[str]:
+    """
+    POST the provided config to its jsonStateServer and return a shortened share URL
+    compatible with the configured viewer.
+    Returns None on failure.
+    """
+    state_server = config.get("jsonStateServer")
+    if not state_server:
+        return None
+    try:
+        import requests
+        r = requests.post(state_server, json=config, timeout=10)
+        # Some servers return JSON, others plain text
+        try:
+            data = r.json()
+        except Exception:
+            data = None
+        if data:
+            # Common patterns: {"url": "https://..."} or {"id": "..."}
+            if isinstance(data, dict):
+                if "url" in data and isinstance(data["url"], str):
+                    return data["url"]
+                if "id" in data and isinstance(data["id"], str):
+                    # Assume the server returns a redirect url base when given an id at same host
+                    base = state_server.rsplit("/", 1)[0]
+                    return f"{base}/{data['id']}"
+        # Fallback to plain text body
+        txt = r.text.strip()
+        if txt.startswith("http"):
+            return txt
+    except Exception:
+        return None
+    return None

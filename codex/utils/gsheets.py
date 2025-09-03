@@ -4,8 +4,27 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 from typing import Optional, Tuple, List
+from codex import logger
 
 ENDPOINT = "https://codex.flywire.ai/api/fetch_google_spreadsheet_data"
+
+
+def _fetch_gsheet_data(gsheet_id: str, user_id: str) -> dict:
+    """
+    Fetch gsheet data as JSON. Returns {} on any error and logs a warning.
+    """
+    url = f"{ENDPOINT}/{gsheet_id}/{user_id}"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except Exception as e:
+            logger.warning(f"GSheet JSON decode failed for {gsheet_id}: {e}")
+            return {}
+    except Exception as e:
+        logger.warning(f"GSheet fetch failed for {gsheet_id}: {e}")
+        return {}
 
 
 def seg_ids_and_soma_pos_matching_gsheet(search_string,
@@ -24,13 +43,10 @@ def seg_ids_and_soma_pos_matching_gsheet(search_string,
     Returns:
         list: A list of valid segment IDs (as strings) matching the search criteria.
     """
-    url = f"{ENDPOINT}/{gsheet_id}/{user_id}"
-    #url = f"{ENDPOINT}/{gsheet_id}"
-
-    data = requests.get(url).json()
-    print(f"Fetched data from Google Sheet: {gsheet_id}")
-    print(data.keys())
-    print(f"Tabs: {list(data.keys())}")
+    data = _fetch_gsheet_data(gsheet_id, user_id)
+    if not data:
+        logger.warning(f"Empty/invalid gsheet data for {gsheet_id}")
+        return [], np.array([])
 
     # Load each sheet into a DataFrame
     dfs = { tab: pd.DataFrame(rows) 
@@ -83,8 +99,10 @@ def seg_ids_and_soma_pos_matching_gsheet_multi(
 
     Returns (seg_id_list, soma_pos) like seg_ids_and_soma_pos_matching_gsheet.
     """
-    url = f"{ENDPOINT}/{gsheet_id}/{user_id}"
-    data = requests.get(url).json()
+    data = _fetch_gsheet_data(gsheet_id, user_id)
+    if not data:
+        logger.warning(f"Empty/invalid gsheet data for {gsheet_id}")
+        return [], np.array([])
 
     dfs = {tab: pd.DataFrame(rows) for tab, rows in data.items()}
     T = dfs[list(dfs.keys())[0]]  # Use the first sheet if specific not present
@@ -163,8 +181,10 @@ def cell_types_by_class_map(
     Assumes the first row is a header and the first two columns correspond to
     cell type names and cell class, respectively.
     """
-    url = f"{ENDPOINT}/{gsheet_id}/{user_id}"
-    data = requests.get(url).json()
+    data = _fetch_gsheet_data(gsheet_id, user_id)
+    if not data:
+        logger.warning(f"Empty/invalid gsheet data for {gsheet_id}")
+        return {}
 
     if tab_name not in data:
         # Fallback: try to find a tab with a similar name (case-insensitive contains)
