@@ -463,10 +463,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     segids.forEach(id => params.append('segids', id));
     params.append('format', fmt);
     const url = `/app/export_arbor_stats?${params.toString()}`;
-    // Trigger download
+    // Trigger download (single file; CSV includes units on row 2)
     const a = document.createElement('a');
     a.href = url;
-    a.target = '_blank';
+    a.setAttribute('download', '');
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

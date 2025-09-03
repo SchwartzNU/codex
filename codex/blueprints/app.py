@@ -397,6 +397,7 @@ def export_arbor_stats():
     DATA_ROOT_PATH = "static/data"
     stats_per_cell = {}
     all_keys = set()
+    units_map = {}
 
     for sid in segids:
         swc_path = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid), "skeleton_warped.swc")
@@ -414,6 +415,10 @@ def export_arbor_stats():
                     row[k] = v
                 stats_per_cell[sid] = row
                 all_keys.update(row.keys())
+                if isinstance(units, dict):
+                    for uk, uv in units.items():
+                        if uk not in units_map:
+                            units_map[uk] = "" if (uv is None) else str(uv)
             except Exception as e:
                 logger.warning(f"Failed to compute stats for {sid}: {e}")
                 stats_per_cell[sid] = None
@@ -442,14 +447,22 @@ def export_arbor_stats():
     base_name = f"arbor_stats_{ts}"
 
     if fmt == "csv":
+        # Single CSV: header row with column names, second row with units, then data rows
         buf = io.StringIO()
-        df.to_csv(buf, index=False)
+        units_row = [""] + [units_map.get(k, "") for k in sorted(all_keys)]
+        df_units_row = _pd.DataFrame([units_row], columns=columns)
+        df_out = _pd.concat([df_units_row, df], ignore_index=True)
+        df_out.to_csv(buf, index=False)
         data = buf.getvalue().encode("utf-8")
         mime = "text/csv"
         filename = f"{base_name}.csv"
     elif fmt in ("pickle", "pkl", "p"):  # pickle DataFrame
+        payload = {"table": df}
+        # attach units mapping as a DataFrame of variable/unit pairs
+        units_entries = [("segmentID", "")] + [(k, units_map.get(k, "")) for k in sorted(all_keys)]
+        payload["units"] = _pd.DataFrame(units_entries, columns=["variable", "unit"])
         buf = io.BytesIO()
-        df.to_pickle(buf)
+        _pd.to_pickle(payload, buf)
         data = buf.getvalue()
         mime = "application/octet-stream"
         filename = f"{base_name}.pkl"
@@ -458,10 +471,42 @@ def export_arbor_stats():
             from scipy.io import savemat as _savemat
         except Exception:
             return jsonify({"error": "scipy is required for .mat export"}), 400
-        # Save as a struct of arrays named 'table'
-        to_save = {col: _np.asarray(df[col].values) for col in df.columns}
+        # Save as an array of structs (Nx1) so MATLAB can do: T = struct2table(S);
+        # Use numeric dtypes: int64 for segmentID, float64 for stats (NaN for missing)
+        stat_keys_sorted = sorted(all_keys)
+        dt = _np.dtype([('segmentID', 'i8')] + [(k, 'f8') for k in stat_keys_sorted])
+        struct_arr = _np.zeros((len(segids), 1), dtype=dt)
+        for i, sid in enumerate(segids):
+            struct_arr[i, 0]['segmentID'] = int(sid)
+            row = stats_per_cell.get(sid)
+            for k in stat_keys_sorted:
+                v = _np.nan
+                if row is not None:
+                    v = row.get(k, _np.nan)
+                # normalize to numeric where possible, otherwise NaN
+                try:
+                    if isinstance(v, bool):
+                        vnum = float(v)
+                    elif v is None:
+                        vnum = _np.nan
+                    else:
+                        # unwrap numpy scalar
+                        if isinstance(v, _np.generic):
+                            v = v.item()
+                        vnum = float(v)
+                except Exception:
+                    vnum = _np.nan
+                struct_arr[i, 0][k] = vnum
+        # Units as a struct mapping field -> unit string
+        units_struct = {}
+        for k in sorted(all_keys):
+            uval = units_map.get(k, "")
+            if uval is None:
+                uval = ""
+            units_struct[k] = _np.array(str(uval), dtype=object)
+        units_struct["segmentID"] = _np.array("", dtype=object)
         buf = io.BytesIO()
-        _savemat(buf, {"table": to_save}, do_compression=True)
+        _savemat(buf, {"S": struct_arr, "Units": units_struct}, do_compression=True)
         data = buf.getvalue()
         mime = "application/octet-stream"
         filename = f"{base_name}.mat"
@@ -482,6 +527,15 @@ def export_arbor_stats():
                 keys_ds = _h5.special_dtype(vlen=str)
                 try:
                     h5f.create_dataset("stat_keys", data=_np.array(sorted(all_keys), dtype=keys_ds))
+                except Exception:
+                    pass
+                # write units group
+                try:
+                    ugrp = h5f.create_group("units")
+                    sdt = _h5.string_dtype(encoding='utf-8')
+                    for k in sorted(all_keys):
+                        ugrp.create_dataset(k, data=_np.array(units_map.get(k, ""), dtype=sdt))
+                    ugrp.create_dataset("segmentID", data=_np.array("", dtype=sdt))
                 except Exception:
                     pass
                 for sid in segids:
