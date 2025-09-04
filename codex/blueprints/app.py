@@ -3,6 +3,7 @@ import os
 import re
 import base64
 import math
+import pickle
 from datetime import datetime
 
 from flask import (
@@ -252,12 +253,18 @@ def render_morpho_typer_neuron_list(
             strat_imgs.append(None)
         # Only compute per-cell arbor stats if stats are enabled
         if stats_enabled:
-            swc_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.swc"
-            if os.path.exists(swc_path):
-                logger.info(f"Loading SWC for segment {seg_id} from {swc_path}")
-                coords, radii, edges = load_swc(swc_path)
-                logger.info(f"Computing arbor stats for segment {seg_id}")
-                stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)
+            arbor_stats_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/arbor_stats.pkl"
+            if os.path.exists(arbor_stats_path):
+                logger.info(f"Reading arbor stats for segment {seg_id} from {arbor_stats_path}")
+                with open(arbor_stats_path, "rb") as f:
+                    try:
+                        stats_data = pickle.load(f)
+                        stats = stats_data.get("stats", {})
+                        units = stats_data.get("units", {})
+                    except Exception as e:
+                        logger.warning(f"Failed to load arbor stats for {seg_id}: {e}")
+                        stats = {}
+                        units = {}
                 arbor_stats.append(stats)
                 arbor_stats_units.append(units)
 
@@ -303,14 +310,22 @@ def arbor_stats(segid):
     if not segid:
         return jsonify({"error": "Missing segid"}), 400
 
-    swc_path = os.path.join(
-        "static", "data", "EW2", "skeletons", str(segid), "skeleton_warped.swc"
+    arbor_stats_path = os.path.join(
+        "static", "data", "EW2", "skeletons", str(segid), "arbor_stats.pkl"
     )
-    if not os.path.exists(swc_path):
-        return jsonify({"error": "SWC not found"}), 404
+    if not os.path.exists(arbor_stats_path):
+        return jsonify({"error": "arbor stats file not found"}), 404
 
-    coords, radii, edges = load_swc(swc_path)
-    stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)
+    logger.info(f"Reading arbor stats for segment {segid} from {arbor_stats_path}")
+    with open(arbor_stats_path, "rb") as f:
+        try:
+            stats_data = pickle.load(f)
+            stats = stats_data.get("stats", {})
+            units = stats_data.get("units", {})
+        except Exception as e:
+            logger.warning(f"Failed to load arbor stats for {segid}: {e}")
+            stats = {}
+            units = {}
 
     # Remove any array-valued stats; convert numpy scalars to Python types
     import numpy as _np
@@ -400,28 +415,31 @@ def export_arbor_stats():
     units_map = {}
 
     for sid in segids:
-        swc_path = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid), "skeleton_warped.swc")
-        if os.path.exists(swc_path):
-            try:
-                coords, radii, edges = load_swc(swc_path)
-                stats, units = arborStatsFromSkeleton(coords, edges, radii=radii)
-                # filter out array-valued stats and convert numpy scalars
-                row = {}
-                for k, v in stats.items():
-                    if isinstance(v, _np.ndarray):
-                        continue
-                    if isinstance(v, _np.generic):
-                        v = v.item()
-                    row[k] = v
-                stats_per_cell[sid] = row
-                all_keys.update(row.keys())
-                if isinstance(units, dict):
-                    for uk, uv in units.items():
-                        if uk not in units_map:
-                            units_map[uk] = "" if (uv is None) else str(uv)
-            except Exception as e:
-                logger.warning(f"Failed to compute stats for {sid}: {e}")
-                stats_per_cell[sid] = None
+        arbor_stats_path = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid), "arbor_stats.pkl")
+        if os.path.exists(arbor_stats_path):
+            logger.info(f"Reading arbor stats for segment {sid} from {arbor_stats_path}")
+            with open(arbor_stats_path, "rb") as f:
+                try:
+                    stats_data = pickle.load(f)
+                    stats = stats_data.get("stats", {})
+                    units = stats_data.get("units", {})
+                    # filter out array-valued stats and convert numpy scalars
+                    row = {}
+                    for k, v in stats.items():
+                        if isinstance(v, _np.ndarray):
+                            continue
+                        if isinstance(v, _np.generic):
+                            v = v.item()
+                        row[k] = v
+                    stats_per_cell[sid] = row
+                    all_keys.update(row.keys())
+                    if isinstance(units, dict):
+                        for uk, uv in units.items():
+                            if uk not in units_map:
+                                units_map[uk] = "" if (uv is None) else str(uv)
+                except Exception as e:
+                    logger.warning(f"Failed to load arbor stats for {sid}: {e}")
+                    stats_per_cell[sid] = None
         else:
             stats_per_cell[sid] = None
 
