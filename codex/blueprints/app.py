@@ -233,6 +233,8 @@ def render_morpho_typer_neuron_list(
     logger.info(f"Loading Morpho-Typer for {len(seg_ids)} segment IDs: {seg_ids}")
     skeleton_imgs = []
     strat_imgs = []
+    # Arbor stats are now loaded on demand (row click) or via export only.
+    # Do not preload per-cell stats during search to keep it fast.
     arbor_stats = []
     arbor_stats_units = []
     DATA_ROOT_PATH = "static/data"
@@ -251,22 +253,8 @@ def render_morpho_typer_neuron_list(
                 strat_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
         else:
             strat_imgs.append(None)
-        # Only compute per-cell arbor stats if stats are enabled
-        if stats_enabled:
-            arbor_stats_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/arbor_stats.pkl"
-            if os.path.exists(arbor_stats_path):
-                logger.info(f"Reading arbor stats for segment {seg_id} from {arbor_stats_path}")
-                with open(arbor_stats_path, "rb") as f:
-                    try:
-                        stats_data = pickle.load(f)
-                        stats = stats_data.get("stats", {})
-                        units = stats_data.get("units", {})
-                    except Exception as e:
-                        logger.warning(f"Failed to load arbor stats for {seg_id}: {e}")
-                        stats = {}
-                        units = {}
-                arbor_stats.append(stats)
-                arbor_stats_units.append(units)
+        # Do not preload arbor stats here. They are fetched per row on click
+        # via /app/arbor_stats/<segid> and loaded in bulk only for export.
 
     # ensure soma_pos is a JSON-serializable list
     soma_pos_list = soma_pos.tolist() if hasattr(soma_pos, 'tolist') else soma_pos

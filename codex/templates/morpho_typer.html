@@ -241,11 +241,9 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   if (statsCheckbox) {
     statsCheckbox.addEventListener('change', async () => {
-      // Toggle selected stats card visibility
+      // Toggle selected stats card visibility only (no recompute)
       const selCard = document.getElementById('selected-stats-card');
       if (selCard) selCard.style.display = statsCheckbox.checked ? '' : 'none';
-      // Re-render population stats accordingly
-      await renderPopulationStats(statsCheckbox.checked);
       // Clear selected stats table when disabling
       if (!statsCheckbox.checked) {
         const tbody = document.querySelector('#selected-stats-table tbody');
