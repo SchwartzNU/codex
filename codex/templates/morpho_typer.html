@@ -235,19 +235,60 @@ document.addEventListener('DOMContentLoaded', async function() {
   const ngFrame = document.getElementById('ng-iframe');
   const statsCheckbox = document.getElementById('stats_enabled');
   let latestNgUrl = '';
+  let selectedSegId = null;
 
   // Always render population count; add indices only if enabled
   await renderPopulationStats(statsCheckbox ? statsCheckbox.checked : false);
+
+  async function fetchAndRenderStatsFor(segid) {
+    if (!segid) return;
+    try {
+      const res = await fetch(`/app/arbor_stats/${segid}`);
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        console.error('JSON parse error:', parseErr);
+        return;
+      }
+      const { stats, units } = data || {};
+      const tbody = document.querySelector('#selected-stats-table tbody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      if (!stats || typeof stats !== 'object') return;
+      Object.entries(stats).forEach(([key, value]) => {
+        if (Array.isArray(value)) return;
+        const tr = document.createElement('tr');
+        ['td', 'td', 'td'].forEach((tag, i) => {
+          const cell = document.createElement(tag);
+          if (i === 0) cell.textContent = key;
+          if (i === 1) cell.textContent = value;
+          if (i === 2) cell.textContent = (units && units[key]) ? units[key] : '';
+          tr.appendChild(cell);
+        });
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error('Stats fetch error', e);
+    }
+  }
 
   if (statsCheckbox) {
     statsCheckbox.addEventListener('change', async () => {
       // Toggle selected stats card visibility only (no recompute)
       const selCard = document.getElementById('selected-stats-card');
       if (selCard) selCard.style.display = statsCheckbox.checked ? '' : 'none';
-      // Clear selected stats table when disabling
+      const tbody = document.querySelector('#selected-stats-table tbody');
       if (!statsCheckbox.checked) {
-        const tbody = document.querySelector('#selected-stats-table tbody');
+        // Clear when hiding
         if (tbody) tbody.innerHTML = '';
+      } else {
+        // If showing and a row is currently selected, (re)fetch its stats
+        if (tbody) tbody.innerHTML = '';
+        if (selectedSegId) {
+          await fetchAndRenderStatsFor(selectedSegId);
+        }
       }
     });
   }
@@ -286,6 +327,8 @@ document.addEventListener('DOMContentLoaded', async function() {
     } catch (e) {
       console.error(e);
     }
+    // Track initial selection for later stats toggle
+    selectedSegId = segids[0];
   }
 
   rows.forEach(row => {
@@ -294,6 +337,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       rows.forEach(r => r.style.backgroundColor = '');
       row.style.backgroundColor = '#e0d7f7';
       const segid = row.dataset.segid;
+      selectedSegId = segid;
       
 
       // update Neuroglancer
@@ -335,35 +379,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       const tbody = document.querySelector('#selected-stats-table tbody');
       if (tbody) tbody.innerHTML = '';
       if (statsCheckbox && statsCheckbox.checked) {
-        try {
-          console.log('Fetching stats for segid:', segid);
-          const res = await fetch(`/app/arbor_stats/${segid}`);
-          const text = await res.text();
-          let data;
-          try {
-              data = JSON.parse(text);
-          } catch (parseErr) {
-              console.error('JSON parse error:', parseErr);
-              return;
-          }
-          const { stats, units } = data;
-          const tbody2 = document.querySelector('#selected-stats-table tbody');
-          tbody2.innerHTML = '';
-          Object.entries(stats).forEach(([key, value]) => {
-            if (Array.isArray(value)) return;
-            const tr = document.createElement('tr');
-            ['td', 'td', 'td'].forEach((tag, i) => {
-              const cell = document.createElement(tag);
-              if (i === 0) cell.textContent = key;
-              if (i === 1) cell.textContent = value;
-              if (i === 2) cell.textContent = units[key] || '';
-              tr.appendChild(cell);
-            });
-            tbody2.appendChild(tr);
-          });
-        } catch (e) {
-          console.error('Stats fetch error', e);
-        }
+        await fetchAndRenderStatsFor(segid);
       }
     });
   });
