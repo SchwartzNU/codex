@@ -10,12 +10,14 @@ packages = [
 
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 Flask = "3.0.3"
 requests = "2.31.0"
 user-agents = "2.2.0"
 nglui = "2.7.2"
-numpy = "^1.24"
+plotly = "6.2.0"
+skeliner = "0.1.10"
+numpy = "^2.3.2"
 pandas = "^2.0"
 scipy = "^1.10"
 h5py = "^3.9"
