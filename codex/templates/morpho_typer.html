@@ -164,13 +164,54 @@ Morpho-Typer
 </div>
 
 <script>
+(function ensurePlotlyLoaded() {
+  if (window.Plotly) {
+    document.dispatchEvent(new Event('plotly:ready'));
+    return;
+  }
+  const s = document.createElement('script');
+  s.src = 'https://cdn.plot.ly/plotly-2.35.2.min.js'; // pinned version
+  s.async = true;
+  s.onload = () => document.dispatchEvent(new Event('plotly:ready'));
+  s.onerror = () => {
+    console.error('Failed to load Plotly bundle.');
+    document.dispatchEvent(new Event('plotly:error'));
+  };
+  document.head.appendChild(s);
+})();
+</script>
+
+<script>
     // array of soma positions from server-side context
     const somaPos = {{ soma_pos|tojson }};
     const cellTypesByClass = {{ cell_types_by_class|tojson }};
     const skeletonFigs = {{ skeleton_figs|tojson|default('[]')|safe }};
     const stratFigs    = {{ strat_figs|tojson|default('[]')|safe }};
 
+async function waitForPlotly() {
+  if (window.Plotly) return;
+  await new Promise((resolve, reject) => {
+    const onReady = () => { cleanup(); resolve(); };
+    const onErr = () => { cleanup(); reject(new Error('Plotly failed to load')); };
+    function cleanup() {
+      document.removeEventListener('plotly:ready', onReady);
+      document.removeEventListener('plotly:error', onErr);
+    }
+    document.addEventListener('plotly:ready', onReady, { once: true });
+    document.addEventListener('plotly:error', onErr, { once: true });
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
+
+  try {
+    await waitForPlotly();
+  } catch (e) {
+    console.error(e);
+    Array.from(document.querySelectorAll('.plot-host'))
+      .forEach(el => el.innerHTML = '<span class="text-danger">Plotly failed to load</span>');
+    return; // stop early if Plotly never loaded
+  }
 
   const plotRows = Array.from(document.querySelectorAll('.skeleton-row'));
 
