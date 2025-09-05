@@ -66,6 +66,43 @@ def _radii_to_sizes(rr: np.ndarray, xlim, ylim, fig_width: int = 800) -> np.ndar
     ref_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0])
     return np.clip(rr / ref_range * fig_width * 0.07, 2, 40)
 
+def _nice_bar_length(span: float) -> float:
+    """Pick a nice scale bar length (in µm) for a given axis span."""
+    if not np.isfinite(span) or span <= 0:
+        return 1.0
+    target = span * 0.2
+    exponent = int(np.floor(np.log10(target)))
+    base = 10.0 ** exponent
+    for m in (5, 2, 1):
+        length = m * base
+        if length <= target:
+            return length
+    return base
+
+def _add_scale_bars(fig, *, row: int, col: int, xr: tuple[float, float], yr: tuple[float, float], length_um: float | None = None):
+    """Add small horizontal and vertical scale bars in bottom-left corner of a subplot."""
+    x0, x1 = xr
+    y0, y1 = yr
+    span_x = x1 - x0
+    span_y = y1 - y0
+    if length_um is None:
+        length_um = _nice_bar_length(min(span_x, span_y))
+    pad_x = span_x * 0.05
+    pad_y = span_y * 0.05
+    bx0 = x0 + pad_x
+    by0 = y0 + pad_y
+    # horizontal bar (X)
+    fig.add_shape(type="line", x0=bx0, y0=by0, x1=bx0 + length_um, y1=by0,
+                  line=dict(color="black", width=2), row=row, col=col)
+    # vertical bar (Y/Z)
+    fig.add_shape(type="line", x0=bx0, y0=by0, x1=bx0, y1=by0 + length_um,
+                  line=dict(color="black", width=2), row=row, col=col)
+    # label centered above horizontal bar
+    fig.add_annotation(x=bx0 + length_um * 0.5, y=by0 + span_y * 0.03,
+                       text=f"{int(length_um) if length_um >= 1 else length_um} µm",
+                       showarrow=False, font=dict(size=10, color="black"),
+                       row=row, col=col)
+
 # SVG path for a rotated ellipse (used for ellipse overlays in Plotly)
 def _ellipse_path(x0, y0, width, height, angle_deg):
     angle = np.deg2rad(angle_deg)
@@ -650,14 +687,21 @@ def front_side_plotly(
         if getattr(sub.layout, "shapes", None):
             for sh in sub.layout.shapes:
                 fig.add_shape(sh, row=1, col=i)
-        # Keep equal aspect
+        # Keep equal aspect; hide axes (ticks, labels, lines)
         fig.update_xaxes(range=sub.layout.xaxis.range, row=1, col=i,
                          constrain="domain",
-                         showgrid=False, zeroline=False, showline=True, linewidth=2, linecolor='black')
+                         showgrid=False, zeroline=False, showline=False, ticks="",
+                         showticklabels=False)
         fig.update_yaxes(range=sub.layout.yaxis.range, row=1, col=i,
                          scaleanchor=f"x{i}", scaleratio=1,
                          constrain="domain",
-                         showgrid=False, zeroline=False, showline=True, linewidth=2, linecolor='black')
+                         showgrid=False, zeroline=False, showline=False, ticks="",
+                         showticklabels=False)
+        # Add small scale bars per panel
+        xr = sub.layout.xaxis.range
+        yr = sub.layout.yaxis.range
+        if xr and yr:
+            _add_scale_bars(fig, row=1, col=i, xr=(xr[0], xr[1]), yr=(yr[0], yr[1]))
 
     # Add dashed ON/OFF SAC lines to the XZ subplot (column 2)
     for yv, color in ((0, "#d62728"), (12, "#1f77b4")):
