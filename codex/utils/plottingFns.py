@@ -97,11 +97,12 @@ def _add_scale_bars(fig, *, row: int, col: int, xr: tuple[float, float], yr: tup
     # vertical bar (Y/Z)
     fig.add_shape(type="line", x0=bx0, y0=by0, x1=bx0, y1=by0 + length_um,
                   line=dict(color="black", width=2), row=row, col=col)
-    # label centered above horizontal bar
-    fig.add_annotation(x=bx0 + length_um * 0.5, y=by0 + span_y * 0.08,
+    # label to the right of the horizontal bar to avoid overlap
+    fig.add_annotation(x=bx0 + length_um + span_x * 0.02, y=by0,
                        text=f"{int(length_um) if length_um >= 1 else length_um} µm",
                        showarrow=False, font=dict(size=10, color="black"),
-                       xanchor='center', yanchor='bottom',
+                       xanchor='left', yanchor='middle',
+                       bgcolor='rgba(255,255,255,0.6)',
                        row=row, col=col)
 
 # SVG path for a rotated ellipse (used for ellipse overlays in Plotly)
@@ -493,7 +494,7 @@ def strat_profile_plotly(
     # Histogram bars
     fig.add_trace(go.Bar(
         x=zp["histogram"], y=zp["x"], orientation='h',
-        marker=dict(color='gray', opacity=0.5),
+        marker=dict(color='#555555', opacity=0.5),
         width=(zp["x"][1] - zp["x"][0]) if len(zp["x"]) > 1 else 0.8,
         showlegend=False,
     ), row=1, col=1)
