@@ -612,6 +612,15 @@ def front_side_plotly(
     if ylim_xz is None:
         ylim_xz = gz
 
+    # Exception: allow extending side-view Z (y-axis of XZ) so its height
+    # matches the front view (XY) given the same µm-per-pixel scaling.
+    span_xy_y = float(ylim_xy[1] - ylim_xy[0]) if ylim_xy is not None else 0.0
+    span_xz_y = float(ylim_xz[1] - ylim_xz[0]) if ylim_xz is not None else 0.0
+    if span_xy_y > 0 and span_xz_y > 0 and span_xz_y < span_xy_y:
+        mid = 0.5 * (ylim_xz[0] + ylim_xz[1])
+        half = 0.5 * span_xy_y
+        ylim_xz = (mid - half, mid + half)
+
     subfigs = [
         projection(skel, plane="xy", color_by="ntype", skel_cmap="Set2", xlim=xlim_xy, ylim=ylim_xy),
         projection(skel, plane="xz", color_by="ntype", skel_cmap="Set2", xlim=xlim_xz, ylim=ylim_xz),

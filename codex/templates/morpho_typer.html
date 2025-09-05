@@ -477,14 +477,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         u.searchParams.set('ylim_xz', `${xz.z[0]},${xz.z[1]}`); // z maps to y in XZ
       }
     }
-    // strat_plot needs xlim_xz and zlim
-    if (u.pathname.endsWith('/strat_plot')) {
-      const xz = ranges.xz;
-      if (xz) {
-        u.searchParams.set('xlim_xz', `${xz.x[0]},${xz.x[1]}`);
-        u.searchParams.set('zlim', `${xz.z[0]},${xz.z[1]}`);
-      }
-    }
+    // strat_plot always uses fixed Z range (-20,30) across rows; do not override
     return u.toString();
   }
   async function applyScaleLock(locked) {

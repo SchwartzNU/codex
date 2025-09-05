@@ -347,11 +347,8 @@ def strat_plot():
 
     try:
         skel = simple_skeleton_from_swc(swc_path)
-        # Use provided ranges if any; otherwise fall back to data-driven extents
-        z = skel.nodes[:, 2]
-        zmin, zmax = float(z.min()), float(z.max())
-        z_profile_extent = _parse_range("zlim") or (zmin, zmax)
-        xlim_xz = _parse_range("xlim_xz")
+        # Stratification plot uses a fixed Z range across rows to cover both ON/OFF ChAT
+        z_profile_extent = (-20.0, 30.0)
         fig = strat_profile_plotly(
             skel,
             z_profile_extent=z_profile_extent,
