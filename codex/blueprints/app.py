@@ -81,6 +81,7 @@ from codex.utils.plottingFns import (
     load_simple_skeleton_cached,
 )
 from codex.utils.position_stats import compute_vdri, compute_nnri
+from codex.cell_mosaics.coverage import CoverageDensityMapper
 import numpy as _np
 
 app = Blueprint("app", __name__, url_prefix="/app")
@@ -424,6 +425,95 @@ def plot_ranges():
         "xy": {"x": [xlo, xhi], "y": [ylo, yhi]},
         "xz": {"x": [xlo, xhi], "z": [zlo, zhi]},
     })
+
+
+@app.route("/coverage_plot")
+def coverage_plot():
+    """Generate a cell coverage mosaic PNG for the given segids.
+
+    Query params: segids repeated or comma-separated list.
+    Uses boundary_points from arbor_stats.pkl when available; otherwise uses
+    convex hull of SWC nodes projected to XY.
+    """
+    import io
+    import numpy as _np
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as _plt
+    from scipy.spatial import ConvexHull as _ConvexHull
+
+    segids_q = request.args.getlist("segids")
+    # also accept a comma-separated list in a single segids
+    if len(segids_q) == 1 and "," in segids_q[0]:
+        segids_q = [s.strip() for s in segids_q[0].split(",") if s.strip()]
+    try:
+        segids = [int(s) for s in segids_q if str(s).isdigit()]
+    except Exception:
+        segids = []
+    if not segids:
+        return jsonify({"error": "No segids provided"}), 400
+
+    DATA_ROOT_PATH = "static/data"
+    polys = []
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    for sid in segids:
+        base = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid))
+        stats_path = os.path.join(base, "arbor_stats.pkl")
+        poly = None
+        if os.path.exists(stats_path):
+            try:
+                with open(stats_path, "rb") as f:
+                    d = pickle.load(f)
+                    bp = d.get("stats", {}).get("boundary_points")
+                    if bp is not None:
+                        arr = _np.asarray(bp, float)
+                        if arr.ndim == 2 and arr.shape[1] == 2 and len(arr) >= 3:
+                            poly = arr
+            except Exception as e:
+                logger.warning(f"coverage_plot: failed to load boundary_points for {sid}: {e}")
+        if poly is None:
+            # Fallback: convex hull of SWC XY
+            swc = os.path.join(base, "skeleton_warped.swc")
+            if not os.path.exists(swc):
+                swc = os.path.join(base, "skeleton.swc")
+            if os.path.exists(swc):
+                try:
+                    nodes, _r, _e = load_swc(swc)
+                    if nodes.size >= 3:
+                        pts = _np.asarray(nodes[:, :2], float)
+                        hull = _ConvexHull(pts)
+                        poly = pts[hull.vertices]
+                except Exception as e:
+                    logger.warning(f"coverage_plot: SWC fallback failed for {sid}: {e}")
+        if poly is not None:
+            polys.append(poly)
+            xmin = min(xmin, float(poly[:, 0].min()))
+            xmax = max(xmax, float(poly[:, 0].max()))
+            ymin = min(ymin, float(poly[:, 1].min()))
+            ymax = max(ymax, float(poly[:, 1].max()))
+
+    if not polys:
+        return jsonify({"error": "No outlines found"}), 404
+
+    # Pad field by 5% of span
+    span_x = xmax - xmin
+    span_y = ymax - ymin
+    pad_x = span_x * 0.05
+    pad_y = span_y * 0.05
+    field = (xmin - pad_x, xmax + pad_x, ymin - pad_y, ymax + pad_y)
+
+    mapper = CoverageDensityMapper(field_bounds=field, resolution=400)
+    mapper.add_multiple_polygons(polys)
+
+    # Render
+    fig, ax, im = mapper.plot_coverage(plot_cell_outlines=True, colormap="viridis", edgecolor="#333333")
+    buf = io.BytesIO()
+    fig.tight_layout(pad=0.5)
+    fig.savefig(buf, format="png", dpi=110)
+    _plt.close(fig)
+    buf.seek(0)
+    return Response(buf.getvalue(), mimetype="image/png")
 
 
 

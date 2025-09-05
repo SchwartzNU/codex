@@ -147,6 +147,9 @@ Morpho-Typer
             </thead>
             <tbody></tbody>
           </table>
+          <div class="mt-2">
+            <img id="coverage-img" alt="Coverage mosaic" style="width:100%; border: 1px solid #ccc; border-radius: 3px; background:#f8f9fa;" />
+          </div>
         </div>
         </div>
       </div>
@@ -337,6 +340,14 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   // Always render population count; add indices only if enabled
   await renderPopulationStats(true);
+  // Load coverage mosaic image
+  (function loadCoverage(){
+    const img = document.getElementById('coverage-img');
+    if (!img) return;
+    const params = new URLSearchParams();
+    segids.forEach(id => params.append('segids', id));
+    img.src = `/app/coverage_plot?${params.toString()}`;
+  })();
 
   async function fetchAndRenderStatsFor(segid) {
     if (!segid) return;
