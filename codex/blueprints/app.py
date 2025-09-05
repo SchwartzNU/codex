@@ -283,7 +283,13 @@ def render_morpho_typer_neuron_list(
 
 @app.route("/skeleton_plot")
 def skeleton_plot():
-    """Return Plotly HTML for front/side projections of a given segment ID."""
+    """Return Plotly HTML for front/side projections of a given segment ID.
+
+    Query params:
+      - segid: required segment id
+      - xlim_xy, ylim_xy, xlim_xz, ylim_xz: optional axis ranges as "min,max"
+      - interactive: 0 or 1 to toggle zoom/modebar (default 0)
+    """
     segid = request.args.get("segid")
     if not segid:
         return jsonify({"error": "Missing segid"}), 400
@@ -314,13 +320,114 @@ def skeleton_plot():
             xlim_xz=_parse_range("xlim_xz"),
             ylim_xz=_parse_range("ylim_xz"),
         )
+        # Toggle interactivity / zoom based on query
+        interactive = request.args.get("interactive", default="0")
+        try:
+            interactive = bool(int(interactive))
+        except Exception:
+            interactive = False
+
+        config = {
+            "displayModeBar": bool(interactive),
+            "staticPlot": not bool(interactive),
+            "responsive": True,
+        }
+        if interactive:
+            config.update({
+                "scrollZoom": True,
+                "doubleClick": "reset",
+                "displaylogo": False,
+                "modeBarButtonsToRemove": [
+                    "toImage", "lasso2d", "select2d",
+                    "hoverClosestCartesian", "hoverCompareCartesian",
+                    "toggleSpikelines"
+                ],
+            })
+
         html = fig.to_html(
             include_plotlyjs="cdn",
             full_html=False,
-            config={"displayModeBar": False, "staticPlot": True},
+            config=config,
             default_width="100%",
         )
-        return Response(html, mimetype="text/html")
+
+        # Add lightweight overlay controls for PNG/JSON download and zoom toggle
+        json_str = fig.to_json()
+        controls = f"""
+        <style>
+          .plot-controls {{
+            position: absolute;
+            top: 6px;
+            left: 8px;
+            display: flex;
+            gap: 6px;
+            z-index: 5;
+          }}
+          .plot-controls button {{
+            border: 1px solid #bbb;
+            background: rgba(255,255,255,0.85);
+            color: #333;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 12px;
+            cursor: pointer;
+          }}
+          .plot-wrapper {{ position: relative; }}
+        </style>
+        <div class="plot-wrapper">
+          <div class="plot-controls">
+            <button id="btn-png" title="Download PNG">PNG</button>
+            <button id="btn-json" title="Download Plotly JSON">JSON</button>
+            <button id="btn-zoom" title="{ 'Disable' if interactive else 'Enable' } zoom">{ 'Unzoom' if interactive else 'Zoom' }</button>
+          </div>
+          <!-- Existing Plotly HTML follows -->
+          {html}
+          <script id="plot-json" type="application/json">{json_str}</script>
+        </div>
+        <script>
+          (function(){{
+            function dlBlob(data, filename, type){{
+              const blob = new Blob([data], {{type: type || 'application/octet-stream'}});
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+              setTimeout(()=>{{ URL.revokeObjectURL(url); a.remove(); }}, 0);
+            }}
+            function getPlotDiv(){{
+              // pick the first Plotly div on this page
+              return document.querySelector('div.js-plotly-plot');
+            }}
+            const segid = {json.dumps(str(segid))};
+            const pngBtn = document.getElementById('btn-png');
+            const jsonBtn = document.getElementById('btn-json');
+            const zoomBtn = document.getElementById('btn-zoom');
+            if (pngBtn) pngBtn.addEventListener('click', async function(){{
+              const gd = getPlotDiv(); if (!gd || !window.Plotly) return;
+              try {{
+                const dataUrl = await window.Plotly.toImage(gd, {{format: 'png', scale: 2}});
+                const a = document.createElement('a');
+                a.href = dataUrl; a.download = `skeleton_${{segid}}.png`;
+                document.body.appendChild(a); a.click(); a.remove();
+              }} catch (e) {{ console.warn('PNG export failed', e); }}
+            }});
+            if (jsonBtn) jsonBtn.addEventListener('click', function(){{
+              const el = document.getElementById('plot-json');
+              if (!el) return; const txt = el.textContent || '';
+              dlBlob(txt, `skeleton_${{segid}}.json`, 'application/json');
+            }});
+            if (zoomBtn) zoomBtn.addEventListener('click', function(){{
+              try {{
+                const u = new URL(window.location.href);
+                const cur = u.searchParams.get('interactive');
+                const next = (cur === '1') ? '0' : '1';
+                u.searchParams.set('interactive', next);
+                window.location.replace(u.toString());
+              }} catch (e) {{}}
+            }});
+          }})();
+        </script>
+        """
+        return Response(controls, mimetype="text/html")
     except Exception as e:
         logger.warning(f"Failed to build skeleton plot for {segid}: {e}")
         return jsonify({"error": str(e)}), 500
@@ -328,7 +435,12 @@ def skeleton_plot():
 
 @app.route("/strat_plot")
 def strat_plot():
-    """Return Plotly HTML for stratification profile + XZ arbor for a given segid."""
+    """Return Plotly HTML for stratification profile + XZ arbor for a given segid.
+
+    Query params:
+      - segid: required segment id
+      - interactive: 0 or 1 to toggle zoom/modebar (default 0)
+    """
     segid = request.args.get("segid")
     if not segid:
         return jsonify({"error": "Missing segid"}), 400
@@ -360,13 +472,107 @@ def strat_plot():
             fig_height_px=220,
             max_width_px=560,
         )
+        # Toggle interactivity / zoom based on query
+        interactive = request.args.get("interactive", default="0")
+        try:
+            interactive = bool(int(interactive))
+        except Exception:
+            interactive = False
+
+        config = {
+            "displayModeBar": bool(interactive),
+            "staticPlot": not bool(interactive),
+            "responsive": True,
+        }
+        if interactive:
+            config.update({
+                "scrollZoom": True,
+                "doubleClick": "reset",
+                "displaylogo": False,
+                "modeBarButtonsToRemove": [
+                    "toImage", "lasso2d", "select2d",
+                    "hoverClosestCartesian", "hoverCompareCartesian",
+                    "toggleSpikelines"
+                ],
+            })
+
         html = fig.to_html(
             include_plotlyjs="cdn",
             full_html=False,
-            config={"displayModeBar": False, "staticPlot": True},
+            config=config,
             default_width="100%",
         )
-        return Response(html, mimetype="text/html")
+
+        # Add overlay controls similar to skeleton_plot
+        json_str = fig.to_json()
+        controls = f"""
+        <style>
+          .plot-controls {{
+            position: absolute;
+            top: 6px;
+            left: 8px;
+            display: flex;
+            gap: 6px;
+            z-index: 5;
+          }}
+          .plot-controls button {{
+            border: 1px solid #bbb;
+            background: rgba(255,255,255,0.85);
+            color: #333;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 12px;
+            cursor: pointer;
+          }}
+          .plot-wrapper {{ position: relative; }}
+        </style>
+        <div class="plot-wrapper">
+          <div class="plot-controls">
+            <button id="btn-png" title="Download PNG">PNG</button>
+            <button id="btn-json" title="Download Plotly JSON">JSON</button>
+            <button id="btn-zoom" title="{ 'Disable' if interactive else 'Enable' } zoom">{ 'Unzoom' if interactive else 'Zoom' }</button>
+          </div>
+          {html}
+          <script id="plot-json" type="application/json">{json_str}</script>
+        </div>
+        <script>
+          (function(){{
+            function dlBlob(data, filename, type){{
+              const blob = new Blob([data], {{type: type || 'application/octet-stream'}});
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+              setTimeout(()=>{{ URL.revokeObjectURL(url); a.remove(); }}, 0);
+            }}
+            function getPlotDiv(){{ return document.querySelector('div.js-plotly-plot'); }}
+            const segid = {json.dumps(str(segid))};
+            document.getElementById('btn-png')?.addEventListener('click', async function(){{
+              const gd = getPlotDiv(); if (!gd || !window.Plotly) return;
+              try {{
+                const dataUrl = await window.Plotly.toImage(gd, {{format: 'png', scale: 2}});
+                const a = document.createElement('a');
+                a.href = dataUrl; a.download = `strat_${{segid}}.png`;
+                document.body.appendChild(a); a.click(); a.remove();
+              }} catch (e) {{ console.warn('PNG export failed', e); }}
+            }});
+            document.getElementById('btn-json')?.addEventListener('click', function(){{
+              const el = document.getElementById('plot-json');
+              if (!el) return; const txt = el.textContent || '';
+              dlBlob(txt, `strat_${{segid}}.json`, 'application/json');
+            }});
+            document.getElementById('btn-zoom')?.addEventListener('click', function(){{
+              try {{
+                const u = new URL(window.location.href);
+                const cur = u.searchParams.get('interactive');
+                const next = (cur === '1') ? '0' : '1';
+                u.searchParams.set('interactive', next);
+                window.location.replace(u.toString());
+              }} catch (e) {{}}
+            }});
+          }})();
+        </script>
+        """
+        return Response(controls, mimetype="text/html")
     except Exception as e:
         logger.warning(f"Failed to build strat plot for {segid}: {e}")
         return jsonify({"error": str(e)}), 500
