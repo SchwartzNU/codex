@@ -98,9 +98,10 @@ def _add_scale_bars(fig, *, row: int, col: int, xr: tuple[float, float], yr: tup
     fig.add_shape(type="line", x0=bx0, y0=by0, x1=bx0, y1=by0 + length_um,
                   line=dict(color="black", width=2), row=row, col=col)
     # label centered above horizontal bar
-    fig.add_annotation(x=bx0 + length_um * 0.5, y=by0 + span_y * 0.03,
+    fig.add_annotation(x=bx0 + length_um * 0.5, y=by0 + span_y * 0.08,
                        text=f"{int(length_um) if length_um >= 1 else length_um} µm",
                        showarrow=False, font=dict(size=10, color="black"),
+                       xanchor='center', yanchor='bottom',
                        row=row, col=col)
 
 # SVG path for a rotated ellipse (used for ellipse overlays in Plotly)
@@ -208,7 +209,8 @@ def projection(
     if color_by == "ntype" and skel.ntype is not None:
         col_nodes = [swc_colors[nt] for nt in skel.ntype[idx_keep]]
     else:
-        col_nodes = "red"
+        # Use a darker gray for skeleton rendering by default
+        col_nodes = "#555555"
     if mesh is not None and xy_mesh.size:
         keep_mesh = _crop_window(xy_mesh)
         xy_mesh = xy_mesh[keep_mesh]
@@ -315,9 +317,10 @@ def projection(
             i0, i1 = idx_map[[n0, n1]]
             xlines.extend([xy_skel[i0, 0], xy_skel[i1, 0], None])
             ylines.extend([xy_skel[i0, 1], xy_skel[i1, 1], None])
+        edge_color = col_nodes if isinstance(col_nodes, str) else "#555555"
         fig.add_trace(go.Scatter(
             x=xlines, y=ylines, mode="lines",
-            line=dict(color="black", width=0.2),
+            line=dict(color=edge_color, width=0.6),
             opacity=cylinder_alpha,
             showlegend=False,
         ))
