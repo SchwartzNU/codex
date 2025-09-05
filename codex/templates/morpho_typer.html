@@ -4,6 +4,32 @@
 Morpho-Typer
 {% endblock title %}
 
+{% block head_extra %}
+  <!-- Ensure Plotly is loaded -->
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    .plot-cell {
+      min-width: 340px;
+      max-width: 520px;
+      vertical-align: top;
+    }
+    .plot-host {
+      width: 100%;
+      height: 380px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: white;
+      overflow: visible;
+    }
+    @media (max-width: 1200px) {
+      .plot-host { height: 320px; }
+    }
+    @media (max-width: 992px) {
+      .plot-host { height: 280px; }
+    }
+  </style>
+{% endblock head_extra %}
+
 {% block content %}
 <nav class="navbar navbar-light bg-light">
     <form class="form-inline">
@@ -61,18 +87,8 @@ Morpho-Typer
                       {{ seg_ids[i] }}
                     </span>
                   </td>
-                  <td>
-                    <img src="{{ skeleton_imgs[i] }}" alt="Skeleton {{ seg_ids[i] }}"
-                         style="max-height: 120px; border: 1px solid #ccc; border-radius: 3px; margin-right: 10px;">
-                  </td>
-                  <td>
-                    {% if strat_imgs[i] %}
-                      <img src="{{ strat_imgs[i] }}" alt="Stratification {{ seg_ids[i] }}"
-                           style="max-height: 120px; max-width: 100%; border: 1px solid #ccc; border-radius: 3px;">
-                    {% else %}
-                      <span class="text-muted">No stratification image</span>
-                    {% endif %}
-                  </td>
+                  <td class="plot-cell"><div class="plot-host" id="skel-host-{{ i }}"></div></td>
+                  <td class="plot-cell"><div class="plot-host" id="strat-host-{{ i }}"></div></td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -151,7 +167,42 @@ Morpho-Typer
     // array of soma positions from server-side context
     const somaPos = {{ soma_pos|tojson }};
     const cellTypesByClass = {{ cell_types_by_class|tojson }};
+    const skeletonFigs = {{ skeleton_figs|tojson|default('[]')|safe }};
+    const stratFigs    = {{ strat_figs|tojson|default('[]')|safe }};
+
 document.addEventListener('DOMContentLoaded', async function() {
+
+  const plotRows = Array.from(document.querySelectorAll('.skeleton-row'));
+
+  function renderRow(i) {
+    const skelHost  = document.getElementById(`skel-host-${i}`);
+    const stratHost = document.getElementById(`strat-host-${i}`);
+    if (!skelHost || !stratHost) return;
+
+    const skelFig  = skeletonFigs[i];
+    const stratFig = stratFigs[i];
+
+    if (skelFig && skelFig.data) {
+      console.log("Rendering skeleton plot")
+      Plotly.newPlot(skelHost, skelFig.data, skelFig.layout || {},
+                     {responsive: true, displaylogo: false});
+    } else {
+      skelHost.innerHTML = '<span class="text-muted">No skeleton plot</span>';
+    }
+
+    if (stratFig && stratFig.data) {
+      console.log("Rendering stratification plot")
+      Plotly.newPlot(stratHost, stratFig.data, stratFig.layout || {},
+                     {responsive: true, displaylogo: false});
+    } else {
+      stratHost.innerHTML = '<span class="text-muted">No stratification plot</span>';
+    }
+  }
+
+  // Render all rows 
+  plotRows.forEach((row, i) => renderRow(i));
+
+
   // Populate f_type_string options based on cell_class selection
   function populateHumanTypes(selectedClass, selectedType) {
     const fTypeSelect = document.getElementById('f_type_string');

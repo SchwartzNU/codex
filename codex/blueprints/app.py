@@ -5,6 +5,7 @@ import base64
 import math
 import pickle
 from datetime import datetime
+import skeliner as sk
 
 from flask import (
     Blueprint,
@@ -75,6 +76,7 @@ from codex.utils.gsheets import (
 from codex import logger
 from codex.utils.arbor_stats import load_swc, arborStatsFromSkeleton
 from codex.utils.position_stats import compute_vdri, compute_nnri
+from codex.utils.plotly_plots import threeviews, strat_profile_plotly
 
 app = Blueprint("app", __name__, url_prefix="/app")
 
@@ -231,8 +233,8 @@ def render_morpho_typer_neuron_list(
         soma_pos = None
     
     logger.info(f"Loading Morpho-Typer for {len(seg_ids)} segment IDs: {seg_ids}")
-    skeleton_imgs = []
-    strat_imgs = []
+    skeleton_figs = []
+    strat_figs = []
     # Arbor stats are now loaded on demand (row click) or via export only.
     # Do not preload per-cell stats during search to keep it fast.
     arbor_stats = []
@@ -240,19 +242,39 @@ def render_morpho_typer_neuron_list(
     DATA_ROOT_PATH = "static/data"
     for seg_id in seg_ids:
         # Skeleton image
-        skel_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.png"
-        if os.path.exists(skel_path):
-            with open(skel_path, "rb") as img_file:
-                skeleton_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
+        mesh_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/mesh.obj"
+        skel_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton.npz"
+        if os.path.exists(mesh_path) and os.path.exists(skel_path):
+            #with open(skel_path, "rb") as img_file:
+            #    skeleton_figs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
+            mesh = sk.io.load_mesh(mesh_path)
+            skel = sk.io.load_npz(skel_path)  # μm
+            #skel = sk.skeletonize(mesh, verbose=True, id=seg_id)
+            fig_skel = threeviews(
+                            skel,
+                            mesh,
+                            scale=1e-3,
+                            unit='μm',
+                            title=f"{seg_id}",
+                            color_by="ntype",
+                            skel_cmap="Set2"
+                        )
+            skeleton_figs.append(fig_skel.to_plotly_json())
         else:
-            skeleton_imgs.append(None)
+            skeleton_figs.append(None)
         # Stratification image
-        strat_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/strat_profile.png"
-        if os.path.exists(strat_path):
-            with open(strat_path, "rb") as img_file:
-                strat_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
+        skeleton_warped_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.npz"
+        if os.path.exists(skeleton_warped_path):
+            #with open(strat_path, "rb") as img_file:
+            #    strat_figs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
+            warped_skeleton = sk.io.load_npz(skeleton_warped_path)  # μm
+            fig_strat = strat_profile_plotly(
+                        warped_skeleton, z_profile_extent=(-30, 50),
+                        seg_id=seg_id,
+                        )
+            strat_figs.append(fig_strat.to_plotly_json())
         else:
-            strat_imgs.append(None)
+            strat_figs.append(None)
         # Do not preload arbor stats here. They are fetched per row on click
         # via /app/arbor_stats/<segid> and loaded in bulk only for export.
 
@@ -267,8 +289,8 @@ def render_morpho_typer_neuron_list(
 
     return render_template(
         "morpho_typer.html",
-        skeleton_imgs=skeleton_imgs,
-        strat_imgs=strat_imgs,
+        skeleton_figs=skeleton_figs,
+        strat_figs=strat_figs,
         arbor_stats=arbor_stats,
         units=arbor_stats_units,
         seg_ids=seg_ids,
