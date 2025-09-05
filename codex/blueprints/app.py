@@ -74,7 +74,13 @@ from codex.utils.gsheets import (
 )
 from codex import logger
 from codex.utils.arbor_stats import load_swc, arborStatsFromSkeleton
+from codex.utils.plottingFns import (
+    simple_skeleton_from_swc,
+    front_side_plotly,
+    strat_profile_plotly,
+)
 from codex.utils.position_stats import compute_vdri, compute_nnri
+import numpy as _np
 
 app = Blueprint("app", __name__, url_prefix="/app")
 
@@ -231,6 +237,7 @@ def render_morpho_typer_neuron_list(
         soma_pos = None
     
     logger.info(f"Loading Morpho-Typer for {len(seg_ids)} segment IDs: {seg_ids}")
+    # Legacy image arrays retained for backward compatibility in template; now unused.
     skeleton_imgs = []
     strat_imgs = []
     # Arbor stats are now loaded on demand (row click) or via export only.
@@ -239,20 +246,9 @@ def render_morpho_typer_neuron_list(
     arbor_stats_units = []
     DATA_ROOT_PATH = "static/data"
     for seg_id in seg_ids:
-        # Skeleton image
-        skel_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/skeleton_warped.png"
-        if os.path.exists(skel_path):
-            with open(skel_path, "rb") as img_file:
-                skeleton_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
-        else:
-            skeleton_imgs.append(None)
-        # Stratification image
-        strat_path = f"{DATA_ROOT_PATH}/EW2/skeletons/{seg_id}/strat_profile.png"
-        if os.path.exists(strat_path):
-            with open(strat_path, "rb") as img_file:
-                strat_imgs.append("data:image/png;base64," + base64.b64encode(img_file.read()).decode())
-        else:
-            strat_imgs.append(None)
+        # Do not preload heavy Plotly figs; will be fetched per-row via endpoints.
+        skeleton_imgs.append(None)
+        strat_imgs.append(None)
         # Do not preload arbor stats here. They are fetched per row on click
         # via /app/arbor_stats/<segid> and loaded in bulk only for export.
 
@@ -281,6 +277,153 @@ def render_morpho_typer_neuron_list(
         cell_types_by_class=cell_types_by_class,
         stats_enabled=stats_enabled,
     )
+
+
+@app.route("/skeleton_plot")
+def skeleton_plot():
+    """Return Plotly HTML for front/side projections of a given segment ID."""
+    segid = request.args.get("segid")
+    if not segid:
+        return jsonify({"error": "Missing segid"}), 400
+    base_dir = os.path.join("static", "data", "EW2", "skeletons", str(segid))
+    swc_path = os.path.join(base_dir, "skeleton_warped.swc")
+    if not os.path.exists(swc_path):
+        # Fallback to non-warped
+        swc_path = os.path.join(base_dir, "skeleton.swc")
+        if not os.path.exists(swc_path):
+            return jsonify({"error": "SWC not found"}), 404
+    def _parse_range(name):
+        val = request.args.get(name)
+        if not val:
+            return None
+        try:
+            a, b = map(float, val.split(","))
+            return (a, b)
+        except Exception:
+            return None
+
+    try:
+        skel = simple_skeleton_from_swc(swc_path)
+        fig = front_side_plotly(
+            skel,
+            xlim_xy=_parse_range("xlim_xy"),
+            ylim_xy=_parse_range("ylim_xy"),
+            xlim_xz=_parse_range("xlim_xz"),
+            ylim_xz=_parse_range("ylim_xz"),
+        )
+        html = fig.to_html(
+            include_plotlyjs="cdn",
+            full_html=False,
+            config={"displayModeBar": False},
+            default_width="100%",
+        )
+        return Response(html, mimetype="text/html")
+    except Exception as e:
+        logger.warning(f"Failed to build skeleton plot for {segid}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/strat_plot")
+def strat_plot():
+    """Return Plotly HTML for stratification profile + XZ arbor for a given segid."""
+    segid = request.args.get("segid")
+    if not segid:
+        return jsonify({"error": "Missing segid"}), 400
+    base_dir = os.path.join("static", "data", "EW2", "skeletons", str(segid))
+    swc_path = os.path.join(base_dir, "skeleton_warped.swc")
+    if not os.path.exists(swc_path):
+        swc_path = os.path.join(base_dir, "skeleton.swc")
+        if not os.path.exists(swc_path):
+            return jsonify({"error": "SWC not found"}), 404
+    def _parse_range(name):
+        val = request.args.get(name)
+        if not val:
+            return None
+        try:
+            a, b = map(float, val.split(","))
+            return (a, b)
+        except Exception:
+            return None
+
+    try:
+        skel = simple_skeleton_from_swc(swc_path)
+        # Use provided ranges if any; otherwise fall back to data-driven extents
+        z = skel.nodes[:, 2]
+        zmin, zmax = float(z.min()), float(z.max())
+        z_profile_extent = _parse_range("zlim") or (zmin, zmax)
+        xlim_xz = _parse_range("xlim_xz")
+        fig = strat_profile_plotly(
+            skel,
+            z_profile_extent=z_profile_extent,
+            seg_id=None,
+            fig_height_px=220,
+            max_width_px=560,
+        )
+        html = fig.to_html(
+            include_plotlyjs="cdn",
+            full_html=False,
+            config={"displayModeBar": False},
+            default_width="100%",
+        )
+        return Response(html, mimetype="text/html")
+    except Exception as e:
+        logger.warning(f"Failed to build strat plot for {segid}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/plot_ranges")
+def plot_ranges():
+    """Compute global plot ranges across given segids for uniform scaling.
+
+    Returns JSON with keys:
+      {
+        "xy": {"x": [min, max], "y": [min, max]},
+        "xz": {"x": [min, max], "z": [min, max]}
+      }
+    """
+    segids = request.args.getlist("segids")
+    if not segids:
+        return jsonify({"error": "No segids provided"}), 400
+    base = os.path.join("static", "data", "EW2", "skeletons")
+    xmin = ymin = zmin = float("inf")
+    xmax = ymax = zmax = float("-inf")
+    count = 0
+    for sid in segids:
+        d = os.path.join(base, str(sid))
+        swc = os.path.join(d, "skeleton_warped.swc")
+        if not os.path.exists(swc):
+            swc = os.path.join(d, "skeleton.swc")
+            if not os.path.exists(swc):
+                continue
+        try:
+            coords, _r, _e = load_swc(swc)
+            if coords.size == 0:
+                continue
+            xmin = min(xmin, float(_np.min(coords[:, 0])))
+            xmax = max(xmax, float(_np.max(coords[:, 0])))
+            ymin = min(ymin, float(_np.min(coords[:, 1])))
+            ymax = max(ymax, float(_np.max(coords[:, 1])))
+            zmin = min(zmin, float(_np.min(coords[:, 2])))
+            zmax = max(zmax, float(_np.max(coords[:, 2])))
+            count += 1
+        except Exception as e:
+            logger.warning(f"plot_ranges: failed reading {sid}: {e}")
+            continue
+    if count == 0 or not _np.isfinite([xmin, xmax, ymin, ymax, zmin, zmax]).all():
+        return jsonify({"error": "No valid skeletons"}), 404
+    def pad(lo, hi, frac=0.02):
+        span = hi - lo
+        if span <= 0:
+            return lo - 1.0, hi + 1.0
+        p = span * frac
+        return lo - p, hi + p
+    xlo, xhi = pad(xmin, xmax)
+    ylo, yhi = pad(ymin, ymax)
+    zlo, zhi = pad(zmin, zmax)
+    return jsonify({
+        "xy": {"x": [xlo, xhi], "y": [ylo, yhi]},
+        "xz": {"x": [xlo, xhi], "z": [zlo, zhi]},
+    })
 
 
 

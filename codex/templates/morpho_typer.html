@@ -40,38 +40,42 @@ Morpho-Typer
     <!-- Skeletons Table -->
     <div class="col-md-6">
       <div class="card bg-light mb-3" style="margin: 5px;">
-        <div class="card-header" style="color: purple; font-size: 18px;">
-          Skeletons
+        <div class="card-header d-flex justify-content-between align-items-center" style="color: purple; font-size: 18px;">
+          <span>Skeletons</span>
+          <div class="form-check" style="font-size: 12px;">
+            <input class="form-check-input" type="checkbox" id="lock-scale" />
+            <label class="form-check-label" for="lock-scale">Lock scale across rows</label>
+          </div>
         </div>
         <div class="card-body">
           <table class="table table-striped">
             <thead>
               <tr>
-                <th scope="col">Segment ID</th>
-                <th scope="col">Front/Side View</th>
-                <th scope="col">Stratification</th>
+                <th scope="col" style="width: 1%; white-space: nowrap;">Segment ID</th>
+                <th scope="col" style="width: 49%;">Front/Side View</th>
+                <th scope="col" style="width: 50%;">Stratification</th>
               </tr>
             </thead>
             <tbody>
               {% for i in range(seg_ids|length) %}
                 <tr class="skeleton-row" data-segid="{{ seg_ids[i] }}" style="cursor:pointer;">
-                  <td style="vertical-align: middle;">
+                  <td style="vertical-align: middle; width: 1%; white-space: nowrap;">
                     <span class="badge badge-pill badge-light text-dark segid-badge" 
-                          style="font-size: 0.70rem; border: 1px solid #ddd; user-select: text;">
+                          style="font-size: 0.60rem; padding: 2px 6px; border: 1px solid #ddd; user-select: text;">
                       {{ seg_ids[i] }}
                     </span>
                   </td>
                   <td>
-                    <img src="{{ skeleton_imgs[i] }}" alt="Skeleton {{ seg_ids[i] }}"
-                         style="max-height: 120px; border: 1px solid #ccc; border-radius: 3px; margin-right: 10px;">
+                    <iframe class="plot-iframe" src="{{ url_for('app.skeleton_plot') }}?segid={{ seg_ids[i] }}" 
+                            title="Skeleton {{ seg_ids[i] }}"
+                            width="100%" height="230" loading="lazy"
+                            style="border: 1px solid #ccc; border-radius: 3px; background:white; display:block; overflow:hidden;"></iframe>
                   </td>
                   <td>
-                    {% if strat_imgs[i] %}
-                      <img src="{{ strat_imgs[i] }}" alt="Stratification {{ seg_ids[i] }}"
-                           style="max-height: 120px; max-width: 100%; border: 1px solid #ccc; border-radius: 3px;">
-                    {% else %}
-                      <span class="text-muted">No stratification image</span>
-                    {% endif %}
+                    <iframe class="plot-iframe" src="{{ url_for('app.strat_plot') }}?segid={{ seg_ids[i] }}" 
+                            title="Stratification {{ seg_ids[i] }}"
+                            width="100%" height="230" loading="lazy"
+                            style="border: 1px solid #ccc; border-radius: 3px; background:white; display:block; overflow:hidden;"></iframe>
                   </td>
                 </tr>
               {% endfor %}
@@ -152,6 +156,38 @@ Morpho-Typer
     const somaPos = {{ soma_pos|tojson }};
     const cellTypesByClass = {{ cell_types_by_class|tojson }};
 document.addEventListener('DOMContentLoaded', async function() {
+  // Auto-resize plot iframes to fit their content height
+  function resizeIframe(iframe) {
+    if (!iframe || !iframe.contentWindow) return;
+    try {
+      const doc = iframe.contentWindow.document;
+      if (!doc) return;
+      const h1 = doc.documentElement ? doc.documentElement.scrollHeight : 0;
+      const h2 = doc.body ? doc.body.scrollHeight : 0;
+      const newH = Math.max(h1, h2, 200);
+      // add a little padding to avoid cut-off
+      iframe.style.height = (newH + 8) + 'px';
+    } catch (e) {
+      // Cross-origin shouldn't happen here; fail silently
+    }
+  }
+  function attachIframeAutoResize() {
+    const iframes = document.querySelectorAll('iframe.plot-iframe');
+    iframes.forEach(ifr => {
+      // initial adjustment after load
+      ifr.addEventListener('load', () => {
+        // resize immediately and again after a short delay for Plotly render
+        resizeIframe(ifr);
+        setTimeout(() => resizeIframe(ifr), 250);
+        setTimeout(() => resizeIframe(ifr), 800);
+      }, { once: false });
+    });
+  }
+  attachIframeAutoResize();
+  // Also respond to window resizes
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('iframe.plot-iframe').forEach(resizeIframe);
+  });
   // Populate f_type_string options based on cell_class selection
   function populateHumanTypes(selectedClass, selectedType) {
     const fTypeSelect = document.getElementById('f_type_string');
@@ -417,6 +453,66 @@ document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('btn-open-ng')?.addEventListener('click', () => {
     if (latestNgUrl) window.open(latestNgUrl, '_blank');
   });
+
+  // Uniform scaling toggle
+  async function computeGlobalRanges(ids) {
+    const params = new URLSearchParams();
+    ids.forEach(id => params.append('segids', id));
+    const res = await fetch(`/app/plot_ranges?${params.toString()}`);
+    if (!res.ok) throw new Error('plot_ranges failed');
+    return await res.json();
+  }
+  function withRanges(url, ranges) {
+    if (!ranges) return url;
+    const u = new URL(url, window.location.origin);
+    // skeleton_plot needs xy and xz ranges
+    if (u.pathname.endsWith('/skeleton_plot')) {
+      const xy = ranges.xy, xz = ranges.xz;
+      if (xy) {
+        u.searchParams.set('xlim_xy', `${xy.x[0]},${xy.x[1]}`);
+        u.searchParams.set('ylim_xy', `${xy.y[0]},${xy.y[1]}`);
+      }
+      if (xz) {
+        u.searchParams.set('xlim_xz', `${xz.x[0]},${xz.x[1]}`);
+        u.searchParams.set('ylim_xz', `${xz.z[0]},${xz.z[1]}`); // z maps to y in XZ
+      }
+    }
+    // strat_plot needs xlim_xz and zlim
+    if (u.pathname.endsWith('/strat_plot')) {
+      const xz = ranges.xz;
+      if (xz) {
+        u.searchParams.set('xlim_xz', `${xz.x[0]},${xz.x[1]}`);
+        u.searchParams.set('zlim', `${xz.z[0]},${xz.z[1]}`);
+      }
+    }
+    return u.toString();
+  }
+  async function applyScaleLock(locked) {
+    const iframes = document.querySelectorAll('iframe.plot-iframe');
+    if (!locked) {
+      // reload without extra params
+      iframes.forEach(ifr => {
+        const u = new URL(ifr.src, window.location.origin);
+        // keep segid param only
+        const segid = u.searchParams.get('segid');
+        const bare = `${u.origin}${u.pathname}?segid=${encodeURIComponent(segid)}`;
+        ifr.src = bare;
+      });
+      return;
+    }
+    try {
+      const ranges = await computeGlobalRanges(segids);
+      iframes.forEach(ifr => {
+        ifr.src = withRanges(ifr.src, ranges);
+      });
+    } catch (e) {
+      console.warn('Failed to lock scale', e);
+    }
+  }
+  const lockChk = document.getElementById('lock-scale');
+  if (lockChk) {
+    lockChk.addEventListener('change', () => applyScaleLock(lockChk.checked));
+  }
   document.getElementById('btn-short-ng')?.addEventListener('click', async () => {
     if (!segids.length) return;
     const params = new URLSearchParams();
