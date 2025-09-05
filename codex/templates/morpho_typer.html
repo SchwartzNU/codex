@@ -25,10 +25,7 @@ Morpho-Typer
         <input class="form-control mr-sm-2" style="width: 50vw;" autocomplete="off" type="search"
                id="seg_ids_string" name="seg_ids_string" placeholder="seg_ids"
                aria-label="seg_id_input" value="{{ seg_ids_string }}">
-        <div class="form-check form-check-inline" style="margin-right: 10px;">
-          <input class="form-check-input" type="checkbox" id="stats_enabled" name="stats_enabled" value="1" {% if stats_enabled %}checked{% endif %}>
-          <label class="form-check-label" for="stats_enabled">Show Stats</label>
-        </div>
+        
         <button class="btn btn-primary my-2 my-sm-0" type="submit">
             <i class="fa-solid fa-magnifying-glass"></i>
         </button>
@@ -41,12 +38,18 @@ Morpho-Typer
     <div class="col-md-6">
       <div class="card bg-light mb-3" style="margin: 5px;">
         <div class="card-header d-flex justify-content-between align-items-center" style="color: purple; font-size: 18px;">
-          <span>Skeletons</span>
-          <div class="form-check" style="font-size: 12px;">
+          <div class="d-flex align-items-center">
+            <button id="skeletons-toggle" class="btn btn-link btn-sm p-0 mr-2" data-toggle="collapse" data-target="#collapse-skeletons" aria-expanded="true" aria-controls="collapse-skeletons" title="Toggle">
+              <i id="skeletons-chevron" class="fa fa-chevron-down"></i>
+            </button>
+            <span>Skeletons</span>
+          </div>
+          <div class="form-check" style="font-size: 12px; margin-bottom: 0;">
             <input class="form-check-input" type="checkbox" id="lock-scale" />
             <label class="form-check-label" for="lock-scale">Lock scale across rows</label>
           </div>
         </div>
+        <div id="collapse-skeletons" class="collapse show">
         <div class="card-body">
           <table class="table table-striped">
             <thead>
@@ -82,6 +85,7 @@ Morpho-Typer
             </tbody>
           </table>
         </div>
+        </div>
       </div>
     </div>
 
@@ -89,9 +93,15 @@ Morpho-Typer
     <div class="col-md-6">
       <!-- Neuroglancer view -->
       <div class="card bg-light mb-3" style="margin: 5px;">
-        <div class="card-header" style="color: purple; font-size: 18px;">
-          Neuroglancer view
+        <div class="card-header d-flex justify-content-between align-items-center" style="color: purple; font-size: 18px;">
+          <div class="d-flex align-items-center">
+            <button id="ng-toggle" class="btn btn-link btn-sm p-0 mr-2" data-toggle="collapse" data-target="#collapse-ng" aria-expanded="true" aria-controls="collapse-ng" title="Toggle">
+              <i id="ng-chevron" class="fa fa-chevron-down"></i>
+            </button>
+            <span>Neuroglancer view</span>
+          </div>
         </div>
+        <div id="collapse-ng" class="collapse show">
         <div class="card-body">
           <div id="ng-share-feedback" class="alert py-1 px-2" role="alert" style="display:none; margin-bottom: 6px;"></div>
           <div class="d-flex justify-content-end" style="margin-bottom: 6px; gap: 6px;">
@@ -116,13 +126,20 @@ Morpho-Typer
                   allow="clipboard-read; clipboard-write; fullscreen"
                   style="border:1px solid #ccc; border-radius: 4px;"></iframe>
         </div>
+        </div>
       </div>
 
       <!-- Population Stats -->
       <div class="card bg-light mb-3" style="margin: 5px;">
-        <div class="card-header" style="color: purple; font-size: 18px;">
-          Population Stats
+        <div class="card-header d-flex justify-content-between align-items-center" style="color: purple; font-size: 18px;">
+          <div class="d-flex align-items-center">
+            <button id="pop-toggle" class="btn btn-link btn-sm p-0 mr-2" data-toggle="collapse" data-target="#collapse-pop" aria-expanded="true" aria-controls="collapse-pop" title="Toggle">
+              <i id="pop-chevron" class="fa fa-chevron-down"></i>
+            </button>
+            <span>Population Stats and Coverage</span>
+          </div>
         </div>
+        <div id="collapse-pop" class="collapse show">
         <div class="card-body">
           <table id="population-stats-table" class="table table-bordered">
             <thead>
@@ -131,13 +148,20 @@ Morpho-Typer
             <tbody></tbody>
           </table>
         </div>
+        </div>
       </div>
 
       <!-- Selected Cell Stats -->
-      <div id="selected-stats-card" class="card bg-light mb-3" style="margin: 5px;{% if not stats_enabled %} display: none;{% endif %}">
-        <div class="card-header" style="color: purple; font-size: 18px;">
-          Selected Cell Stats
+      <div id="selected-stats-card" class="card bg-light mb-3" style="margin: 5px;">
+        <div class="card-header d-flex justify-content-between align-items-center" style="color: purple; font-size: 18px;">
+          <div class="d-flex align-items-center">
+            <button id="sel-toggle" class="btn btn-link btn-sm p-0 mr-2" data-toggle="collapse" data-target="#collapse-sel" aria-expanded="true" aria-controls="collapse-sel" title="Toggle">
+              <i id="sel-chevron" class="fa fa-chevron-down"></i>
+            </button>
+            <span>Selected Cell Stats</span>
+          </div>
         </div>
+        <div id="collapse-sel" class="collapse show">
         <div class="card-body">
           <table id="selected-stats-table" class="table table-bordered">
             <thead>
@@ -145,6 +169,7 @@ Morpho-Typer
             </thead>
             <tbody></tbody>
           </table>
+        </div>
         </div>
       </div>
     </div>
@@ -156,6 +181,34 @@ Morpho-Typer
     const somaPos = {{ soma_pos|tojson }};
     const cellTypesByClass = {{ cell_types_by_class|tojson }};
 document.addEventListener('DOMContentLoaded', async function() {
+  // Keep collapse chevron in sync for Skeletons card
+  $("#collapse-skeletons").on('show.bs.collapse', function(){
+    document.getElementById('skeletons-chevron')?.classList.replace('fa-chevron-right', 'fa-chevron-down');
+  });
+  $("#collapse-skeletons").on('hide.bs.collapse', function(){
+    document.getElementById('skeletons-chevron')?.classList.replace('fa-chevron-down', 'fa-chevron-right');
+  });
+  // Neuroglancer card chevron sync
+  $("#collapse-ng").on('show.bs.collapse', function(){
+    document.getElementById('ng-chevron')?.classList.replace('fa-chevron-right', 'fa-chevron-down');
+  });
+  $("#collapse-ng").on('hide.bs.collapse', function(){
+    document.getElementById('ng-chevron')?.classList.replace('fa-chevron-down', 'fa-chevron-right');
+  });
+  // Population card chevron sync
+  $("#collapse-pop").on('show.bs.collapse', function(){
+    document.getElementById('pop-chevron')?.classList.replace('fa-chevron-right', 'fa-chevron-down');
+  });
+  $("#collapse-pop").on('hide.bs.collapse', function(){
+    document.getElementById('pop-chevron')?.classList.replace('fa-chevron-down', 'fa-chevron-right');
+  });
+  // Selected stats card chevron sync
+  $("#collapse-sel").on('show.bs.collapse', function(){
+    document.getElementById('sel-chevron')?.classList.replace('fa-chevron-right', 'fa-chevron-down');
+  });
+  $("#collapse-sel").on('hide.bs.collapse', function(){
+    document.getElementById('sel-chevron')?.classList.replace('fa-chevron-down', 'fa-chevron-right');
+  });
   // Auto-resize plot iframes to fit their content height
   function resizeIframe(iframe) {
     if (!iframe || !iframe.contentWindow) return;
@@ -276,12 +329,11 @@ document.addEventListener('DOMContentLoaded', async function() {
   const rows = document.querySelectorAll('.skeleton-row');
   const segids = Array.from(rows).map(r => r.dataset.segid);
   const ngFrame = document.getElementById('ng-iframe');
-  const statsCheckbox = document.getElementById('stats_enabled');
   let latestNgUrl = '';
   let selectedSegId = null;
 
   // Always render population count; add indices only if enabled
-  await renderPopulationStats(statsCheckbox ? statsCheckbox.checked : false);
+  await renderPopulationStats(true);
 
   async function fetchAndRenderStatsFor(segid) {
     if (!segid) return;
@@ -317,24 +369,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
   }
 
-  if (statsCheckbox) {
-    statsCheckbox.addEventListener('change', async () => {
-      // Toggle selected stats card visibility only (no recompute)
-      const selCard = document.getElementById('selected-stats-card');
-      if (selCard) selCard.style.display = statsCheckbox.checked ? '' : 'none';
-      const tbody = document.querySelector('#selected-stats-table tbody');
-      if (!statsCheckbox.checked) {
-        // Clear when hiding
-        if (tbody) tbody.innerHTML = '';
-      } else {
-        // If showing and a row is currently selected, (re)fetch its stats
-        if (tbody) tbody.innerHTML = '';
-        if (selectedSegId) {
-          await fetchAndRenderStatsFor(selectedSegId);
-        }
-      }
-    });
-  }
+  // Removed Show Stats toggle; cards are collapsible instead
 
   // initial Neuroglancer load
   if (segids.length && ngFrame) {
@@ -421,9 +456,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       // fetch and populate Selected Cell Stats (only if enabled)
       const tbody = document.querySelector('#selected-stats-table tbody');
       if (tbody) tbody.innerHTML = '';
-      if (statsCheckbox && statsCheckbox.checked) {
-        await fetchAndRenderStatsFor(segid);
-      }
+      await fetchAndRenderStatsFor(segid);
     });
   });
   // Allow copying segment ID without triggering row click
