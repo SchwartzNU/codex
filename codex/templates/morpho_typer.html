@@ -304,12 +304,15 @@ document.addEventListener('DOMContentLoaded', async function() {
       trCount.appendChild(td);
     });
     popTbody.appendChild(trCount);
-    if (!doIndices || !somaPos || !Array.isArray(somaPos) || somaPos.length === 0) return;
+    if (!doIndices) return;
     try {
+      const payload = (somaPos && Array.isArray(somaPos) && somaPos.length)
+        ? {soma_pos: somaPos}
+        : {segids: segids};
       const resp = await fetch('/app/population_stats', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({soma_pos: somaPos})
+        body: JSON.stringify(payload)
       });
       const {vdri, nnri} = await resp.json();
       [["VDRI", vdri, ''], ["NNRI", nnri, '']].forEach(([k, v, u]) => {

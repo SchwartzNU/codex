@@ -488,13 +488,39 @@ def population_stats():
     """
     data = request.get_json(force=True)
     soma_pos = data.get("soma_pos")
-    if not soma_pos or not isinstance(soma_pos, list):
-        return jsonify({"error": "Missing or invalid soma_pos"}), 400
-
     import numpy as _np
     import math
-    # Build numpy array of shape (N,2)
-    coords = _np.array(soma_pos, dtype=float)
+    coords = None
+    if soma_pos and isinstance(soma_pos, list) and len(soma_pos) > 0:
+        # Build numpy array of shape (N,2)
+        coords = _np.array(soma_pos, dtype=float)
+    else:
+        # Fallback: accept segids and estimate soma x,y from SWC (node 0)
+        segids = data.get("segids") or []
+        try:
+            segids = [int(s) for s in segids]
+        except Exception:
+            segids = []
+        if segids:
+            est = []
+            base_dir = os.path.join("static", "data", "EW2", "skeletons")
+            for sid in segids:
+                d = os.path.join(base_dir, str(sid))
+                swc_path = os.path.join(d, "skeleton_warped.swc")
+                if not os.path.exists(swc_path):
+                    swc_path = os.path.join(d, "skeleton.swc")
+                    if not os.path.exists(swc_path):
+                        continue
+                try:
+                    nodes, _r, _e = load_swc(swc_path)
+                    if nodes.size:
+                        est.append([float(nodes[0, 0]), float(nodes[0, 1])])
+                except Exception as e:
+                    logger.warning(f"population_stats: failed to read {sid}: {e}")
+            if est:
+                coords = _np.array(est, dtype=float)
+    if coords is None:
+        return jsonify({"error": "Missing positions and segids"}), 400
 
     # if fewer than 3 cells, both regularity indices are undefined
     #Note: GWS: We will need to create a central bounding box for the VDRI and NNRI calculations to make sense
