@@ -507,13 +507,315 @@ def coverage_plot():
     mapper.add_multiple_polygons(polys)
 
     # Render
-    fig, ax, im = mapper.plot_coverage(plot_cell_outlines=True, colormap="viridis", edgecolor="#333333")
+    # Custom render without axes; add scale bar (µm)
+    import numpy as _np
+    fig, ax = _plt.subplots(figsize=(6, 5))
+    im = ax.imshow(
+        mapper.coverage_count,
+        extent=(mapper.xmin, mapper.xmax, mapper.ymin, mapper.ymax),
+        origin='lower', cmap='viridis', interpolation='nearest')
+    # Overlay outlines
+    for poly in polys:
+        ax.plot(poly[:, 0], poly[:, 1], color="#333333", linewidth=1, alpha=0.9)
+    # Hide axes
+    ax.set_axis_off()
+    ax.set_aspect('equal')
+    # Add a simple scale bar (choose 20% of smaller span)
+    span_x = mapper.xmax - mapper.xmin
+    span_y = mapper.ymax - mapper.ymin
+    def _nice_len(s):
+        import math
+        t = s * 0.2
+        e = int(math.floor(math.log10(t))) if t > 0 else 0
+        b = 10 ** e
+        for m in (5, 2, 1):
+            L = m * b
+            if L <= t:
+                return L
+        return b
+    L = _nice_len(min(span_x, span_y))
+    pad_x = span_x * 0.05
+    pad_y = span_y * 0.05
+    x0 = mapper.xmin + pad_x
+    y0 = mapper.ymin + pad_y
+    ax.plot([x0, x0 + L], [y0, y0], color='black', linewidth=2)
+    # label to right of bar
+    ax.text(x0 + L + span_x * 0.01, y0, f"{int(L) if L >= 1 else L} µm",
+            va='center', ha='left', fontsize=9,
+            bbox=dict(boxstyle='round,pad=0.15', fc='white', ec='none', alpha=0.6))
+
     buf = io.BytesIO()
-    fig.tight_layout(pad=0.5)
+    # Add colorbar for coverage counts
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Coverage (# cells)')
+    fig.tight_layout(pad=0.1)
     fig.savefig(buf, format="png", dpi=110)
     _plt.close(fig)
     buf.seek(0)
     return Response(buf.getvalue(), mimetype="image/png")
+
+
+@app.route("/coverage_plot_html")
+def coverage_plot_html():
+    """Interactive Plotly coverage map with click-to-select support.
+
+    Posts window message {type:'coverage-click', x:<float>, y:<float>} on click.
+    """
+    segids_q = request.args.getlist("segids")
+    if len(segids_q) == 1 and "," in segids_q[0]:
+        segids_q = [s.strip() for s in segids_q[0].split(",") if s.strip()]
+    try:
+        segids = [int(s) for s in segids_q if str(s).isdigit()]
+    except Exception:
+        segids = []
+    if not segids:
+        return Response("<div>No segids</div>", mimetype="text/html")
+
+    import numpy as _np
+    from scipy.spatial import ConvexHull as _ConvexHull
+    import plotly.graph_objects as go
+
+    DATA_ROOT_PATH = "static/data"
+    polys = []
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    for sid in segids:
+        base = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid))
+        stats_path = os.path.join(base, "arbor_stats.pkl")
+        poly = None
+        if os.path.exists(stats_path):
+            try:
+                with open(stats_path, "rb") as f:
+                    d = pickle.load(f)
+                    bp = d.get("stats", {}).get("boundary_points")
+                    if bp is not None:
+                        arr = _np.asarray(bp, float)
+                        if arr.ndim == 2 and arr.shape[1] == 2 and len(arr) >= 3:
+                            poly = arr
+            except Exception:
+                pass
+        if poly is None:
+            swc = os.path.join(base, "skeleton_warped.swc")
+            if not os.path.exists(swc):
+                swc = os.path.join(base, "skeleton.swc")
+            if os.path.exists(swc):
+                try:
+                    nodes, _r, _e = load_swc(swc)
+                    if nodes.size >= 3:
+                        pts = _np.asarray(nodes[:, :2], float)
+                        hull = _ConvexHull(pts)
+                        poly = pts[hull.vertices]
+                except Exception:
+                    pass
+        if poly is not None:
+            polys.append(poly)
+            xmin = min(xmin, float(poly[:, 0].min()))
+            xmax = max(xmax, float(poly[:, 0].max()))
+            ymin = min(ymin, float(poly[:, 1].min()))
+            ymax = max(ymax, float(poly[:, 1].max()))
+    if not polys:
+        return Response("<div>No outlines</div>", mimetype="text/html")
+
+    # Build coverage grid
+    span_x = xmax - xmin
+    span_y = ymax - ymin
+    pad_x = span_x * 0.05
+    pad_y = span_y * 0.05
+    field = (xmin - pad_x, xmax + pad_x, ymin - pad_y, ymax + pad_y)
+    mapper = CoverageDensityMapper(field_bounds=field, resolution=400)
+    mapper.add_multiple_polygons(polys)
+
+    # Plotly heatmap
+    xaxis = _np.linspace(mapper.xmin, mapper.xmax, mapper.coverage_count.shape[1])
+    yaxis = _np.linspace(mapper.ymin, mapper.ymax, mapper.coverage_count.shape[0])
+    fig = go.Figure(data=go.Heatmap(
+        z=mapper.coverage_count,
+        x=xaxis, y=yaxis,
+        colorscale='Viridis',
+        colorbar=dict(title='Coverage (# cells)'),
+        showscale=True
+    ))
+    # Hide axes decorations
+    fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, visible=False)
+    fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False, visible=False, scaleanchor='x', scaleratio=1)
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor='#f8f9fa', paper_bgcolor='#f8f9fa', height=420)
+
+    # Add scale bar shape and label
+    def _nice_len(s):
+        import math
+        t = s * 0.2
+        e = int(math.floor(math.log10(t))) if t > 0 else 0
+        b = 10 ** e
+        for m in (5, 2, 1):
+            L = m * b
+            if L <= t:
+                return L
+        return b
+    L = _nice_len(min(mapper.xmax - mapper.xmin, mapper.ymax - mapper.ymin))
+    x0 = mapper.xmin + (mapper.xmax - mapper.xmin) * 0.05
+    y0 = mapper.ymin + (mapper.ymax - mapper.ymin) * 0.05
+    fig.add_shape(type='line', x0=x0, x1=x0 + L, y0=y0, y1=y0, line=dict(color='black', width=3))
+    fig.add_annotation(x=x0 + L + (mapper.xmax - mapper.xmin) * 0.01, y=y0, text=f"{int(L) if L >= 1 else L} µm",
+                       showarrow=False, xanchor='left', yanchor='middle', bgcolor='rgba(255,255,255,0.6)', font=dict(size=10))
+
+    html = fig.to_html(include_plotlyjs='cdn', full_html=False, config={"displayModeBar": False})
+    script = """
+    <script>
+      document.addEventListener('DOMContentLoaded', function(){
+        const gd = document.querySelector('div.js-plotly-plot');
+        if (!gd) return;
+        gd.on('plotly_click', function(ev){
+          if (!ev || !ev.points || !ev.points.length) return;
+          const p = ev.points[0];
+          const x = p.x; const y = p.y;
+          if (window.parent) {
+            window.parent.postMessage({type:'coverage-click', x:x, y:y}, '*');
+          }
+        });
+      });
+    </script>
+    """
+    return Response(html + script, mimetype='text/html')
+
+
+@app.route("/soma_xy")
+def soma_xy():
+    """Return soma XY positions for segids. Fallback to SWC node 0.
+
+    Response JSON: { positions: [[x,y] or null,...] } aligned to input segids.
+    """
+    segids_q = request.args.getlist("segids")
+    if len(segids_q) == 1 and "," in segids_q[0]:
+        segids_q = [s.strip() for s in segids_q[0].split(",") if s.strip()]
+    try:
+        segids = [int(s) for s in segids_q if str(s).isdigit()]
+    except Exception:
+        segids = []
+    DATA_ROOT_PATH = "static/data"
+    out = []
+    for sid in segids:
+        pos = None
+        base = os.path.join(DATA_ROOT_PATH, "EW2", "skeletons", str(sid))
+        swc = os.path.join(base, "skeleton_warped.swc")
+        if not os.path.exists(swc):
+            swc = os.path.join(base, "skeleton.swc")
+        if os.path.exists(swc):
+            try:
+                nodes, _r, _e = load_swc(swc)
+                if nodes.size:
+                    pos = [float(nodes[0,0]), float(nodes[0,1])]
+            except Exception:
+                pos = None
+        out.append(pos)
+    return jsonify({"positions": out})
+
+
+@app.route("/strat_profiles_heatmap")
+def strat_profiles_heatmap():
+    """Interactive Plotly heatmap of stratification profiles for given segids.
+
+    Clicking a row posts a message to the parent window with the segid.
+    """
+    segids_q = request.args.getlist("segids")
+    if len(segids_q) == 1 and "," in segids_q[0]:
+        segids_q = [s.strip() for s in segids_q[0].split(",") if s.strip()]
+    try:
+        segids = [int(s) for s in segids_q if str(s).isdigit()]
+    except Exception:
+        segids = []
+    if not segids:
+        return Response("<div>No segids</div>", mimetype="text/html")
+
+    import numpy as _np
+    import json as _json
+    # Build fixed z grid
+    zmin, zmax = -20.0, 30.0
+    nbins = 100
+    z_grid = _np.linspace(zmin, zmax, nbins)
+    rows = []
+    kept_segids = []
+    for sid in segids:
+        base = os.path.join("static", "data", "EW2", "skeletons", str(sid))
+        swc = os.path.join(base, "skeleton_warped.swc")
+        if not os.path.exists(swc):
+            swc = os.path.join(base, "skeleton.swc")
+            if not os.path.exists(swc):
+                continue
+        try:
+            mtime = os.path.getmtime(swc)
+            skel = load_simple_skeleton_cached(swc, mtime)
+            zp = skel.extra.get("z_profile")
+            if not zp or len(zp.get("x", [])) < 2:
+                continue
+            # interpolate distribution onto grid
+            x = _np.asarray(zp["x"], float)
+            d = _np.asarray(zp["distribution"], float)
+            # guard lengths
+            if x.ndim != 1 or d.ndim != 1 or len(x) != len(d):
+                continue
+            di = _np.interp(z_grid, x, d, left=0.0, right=0.0)
+            # normalize to [0,1]
+            if di.max() > 0:
+                di = di / di.max()
+            rows.append(di)
+            kept_segids.append(sid)
+        except Exception as e:
+            logger.warning(f"strat_profiles_heatmap: failed for {sid}: {e}")
+            continue
+    if not rows:
+        return Response("<div>No profiles</div>", mimetype="text/html")
+    M = _np.vstack(rows)
+    # Build HTML with Plotly
+    import plotly.graph_objects as go
+    fig = go.Figure(data=go.Heatmap(
+        z=M,
+        x=z_grid,
+        y=[str(s) for s in kept_segids],
+        colorscale='Viridis',
+        zmin=0, zmax=1,
+        showscale=True,
+        colorbar=dict(title="norm. density")
+    ))
+    # Vertical lines at z=0 and z=12
+    n = M.shape[0]
+    fig.add_shape(type='line', x0=0, x1=0, y0=-0.5, y1=n-0.5,
+                  line=dict(color='red', width=2, dash='dash'))
+    fig.add_shape(type='line', x0=12, x1=12, y0=-0.5, y1=n-0.5,
+                  line=dict(color='blue', width=2, dash='dash'))
+    fig.update_layout(
+        margin=dict(l=10, r=10, t=10, b=40),
+        height=260 + max(0, (n-10) * 12),
+        xaxis_title='Z (µm)', yaxis_title='Cells',
+        plot_bgcolor='#f8f9fa', paper_bgcolor='#f8f9fa'
+    )
+    html = fig.to_html(include_plotlyjs='cdn', full_html=False, config={"displayModeBar": False})
+    # Append click handler script to postMessage segid
+    script = f"""
+    <script>
+      const kept = {_json.dumps([str(s) for s in kept_segids])};
+      document.addEventListener('DOMContentLoaded', function() {{
+        const gd = document.querySelector('div.js-plotly-plot');
+        if (!gd) return;
+        gd.on('plotly_click', function(ev) {{
+          if (!ev || !ev.points || !ev.points.length) return;
+          const p = ev.points[0];
+          let rowIndex = null;
+          if (Array.isArray(p.pointNumber)) {{
+            rowIndex = p.pointNumber[0];
+          }} else if (typeof p.pointNumber === 'number') {{
+            rowIndex = p.pointNumber;
+          }} else if (typeof p.y === 'string') {{
+            rowIndex = kept.indexOf(p.y);
+          }}
+          const segid = (rowIndex != null && rowIndex >= 0) ? kept[rowIndex] : String(p.y);
+          if (window.parent) {{
+            window.parent.postMessage({{type: 'select-segid', segid: segid}}, '*');
+          }}
+        }});
+      }});
+    </script>
+    """
+    return Response(html + script, mimetype='text/html')
 
 
 

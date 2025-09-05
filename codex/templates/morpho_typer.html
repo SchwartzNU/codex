@@ -48,6 +48,10 @@ Morpho-Typer
             <input class="form-check-input" type="checkbox" id="lock-scale" />
             <label class="form-check-label" for="lock-scale">Lock scale across rows</label>
           </div>
+          <div class="form-check" style="font-size: 12px; margin-bottom: 0; margin-left: 10px;">
+            <input class="form-check-input" type="checkbox" id="only-selected" />
+            <label class="form-check-label" for="only-selected">Show only selected</label>
+          </div>
         </div>
         <div id="collapse-skeletons" class="collapse show">
         <div class="card-body">
@@ -148,9 +152,28 @@ Morpho-Typer
             <tbody></tbody>
           </table>
           <div class="mt-2">
-            <img id="coverage-img" alt="Coverage mosaic" style="width:100%; border: 1px solid #ccc; border-radius: 3px; background:#f8f9fa;" />
+            <iframe id="coverage-iframe" src="" width="100%" height="440" loading="lazy"
+                    style="border: 1px solid #ccc; border-radius: 3px; background:#f8f9fa; display:block; overflow:hidden;"></iframe>
           </div>
         </div>
+        </div>
+      </div>
+
+      <!-- Stratification Profiles Heatmap -->
+      <div class="card bg-light mb-3" style="margin: 5px;">
+        <div class="card-header d-flex justify-content-between align-items-center" style="color: purple; font-size: 18px;">
+          <div class="d-flex align-items-center">
+            <button id="strat-toggle" class="btn btn-link btn-sm p-0 mr-2" data-toggle="collapse" data-target="#collapse-strat-heat" aria-expanded="true" aria-controls="collapse-strat-heat" title="Toggle">
+              <i id="strat-chevron" class="fa fa-chevron-down"></i>
+            </button>
+            <span>Stratification Profiles</span>
+          </div>
+        </div>
+        <div id="collapse-strat-heat" class="collapse show">
+          <div class="card-body">
+            <iframe id="strat-heat-iframe" src="" width="100%" height="360" loading="lazy"
+                    style="border: 1px solid #ccc; border-radius: 3px; background:#f8f9fa; display:block; overflow:hidden;"></iframe>
+          </div>
         </div>
       </div>
 
@@ -342,12 +365,56 @@ document.addEventListener('DOMContentLoaded', async function() {
   await renderPopulationStats(true);
   // Load coverage mosaic image
   (function loadCoverage(){
-    const img = document.getElementById('coverage-img');
-    if (!img) return;
+    const iframe = document.getElementById('coverage-iframe');
+    if (!iframe) return;
     const params = new URLSearchParams();
     segids.forEach(id => params.append('segids', id));
-    img.src = `/app/coverage_plot?${params.toString()}`;
+    iframe.src = `/app/coverage_plot_html?${params.toString()}`;
   })();
+
+  // Load stratification profiles heatmap
+  (function loadStratHeat(){
+    const iframe = document.getElementById('strat-heat-iframe');
+    if (!iframe) return;
+    const params = new URLSearchParams();
+    segids.forEach(id => params.append('segids', id));
+    iframe.src = `/app/strat_profiles_heatmap?${params.toString()}`;
+  })();
+
+  // Listen to clicks from strat heatmap iframe to select a row
+  window.addEventListener('message', (ev) => {
+    if (!ev || !ev.data) return;
+    if (ev.data.type === 'select-segid') {
+      const segid = ev.data.segid;
+      const row = Array.from(document.querySelectorAll('.skeleton-row')).find(r => r.dataset.segid === String(segid));
+      if (row) row.click();
+    }
+    if (ev.data.type === 'coverage-click') {
+      const x = ev.data.x, y = ev.data.y;
+      // Always use SWC-derived soma positions to match coverage coordinates
+      const proceed = (positions) => {
+        if (!positions || !positions.length) return;
+        let best = -1, bestD = Infinity;
+        positions.forEach((p, i) => {
+          if (!p) return;
+          const dx = p[0] - x, dy = p[1] - y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestD) { bestD = d2; best = i; }
+        });
+        if (best >= 0) {
+          const seg = segids[best];
+          const row = Array.from(document.querySelectorAll('.skeleton-row')).find(r => r.dataset.segid === String(seg));
+          if (row) row.click();
+        }
+      };
+      const params = new URLSearchParams();
+      segids.forEach(id => params.append('segids', id));
+      fetch(`/app/soma_xy?${params.toString()}`)
+        .then(r => r.json())
+        .then(js => proceed(js.positions))
+        .catch(() => {});
+    }
+  });
 
   async function fetchAndRenderStatsFor(segid) {
     if (!segid) return;
@@ -381,6 +448,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     } catch (e) {
       console.error('Stats fetch error', e);
     }
+  }
+
+  function updateRowVisibility() {
+    const only = document.getElementById('only-selected')?.checked;
+    const allRows = Array.from(document.querySelectorAll('.skeleton-row'));
+    if (!only || !selectedSegId) {
+      allRows.forEach(r => r.style.display = '');
+      return;
+    }
+    allRows.forEach(r => {
+      r.style.display = (r.dataset.segid === String(selectedSegId)) ? '' : 'none';
+    });
   }
 
   // Removed Show Stats toggle; cards are collapsible instead
@@ -430,6 +509,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       row.style.backgroundColor = '#e0d7f7';
       const segid = row.dataset.segid;
       selectedSegId = segid;
+      updateRowVisibility();
       
 
       // update Neuroglancer
@@ -473,6 +553,7 @@ document.addEventListener('DOMContentLoaded', async function() {
       await fetchAndRenderStatsFor(segid);
     });
   });
+  document.getElementById('only-selected')?.addEventListener('change', updateRowVisibility);
   // Allow copying segment ID without triggering row click
   document.querySelectorAll('.segid-badge').forEach(el => {
     el.addEventListener('click', ev => ev.stopPropagation());
