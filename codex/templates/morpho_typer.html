@@ -69,13 +69,13 @@ Morpho-Typer
                     <iframe class="plot-iframe" src="{{ url_for('app.skeleton_plot') }}?segid={{ seg_ids[i] }}" 
                             title="Skeleton {{ seg_ids[i] }}"
                             width="100%" height="230" loading="lazy"
-                            style="border: 1px solid #ccc; border-radius: 3px; background:white; display:block; overflow:hidden;"></iframe>
+                            style="border: 1px solid #ccc; border-radius: 3px; background:#f8f9fa; display:block; overflow:hidden;"></iframe>
                   </td>
                   <td>
                     <iframe class="plot-iframe" src="{{ url_for('app.strat_plot') }}?segid={{ seg_ids[i] }}" 
                             title="Stratification {{ seg_ids[i] }}"
                             width="100%" height="230" loading="lazy"
-                            style="border: 1px solid #ccc; border-radius: 3px; background:white; display:block; overflow:hidden;"></iframe>
+                            style="border: 1px solid #ccc; border-radius: 3px; background:#f8f9fa; display:block; overflow:hidden;"></iframe>
                   </td>
                 </tr>
               {% endfor %}
@@ -185,9 +185,16 @@ document.addEventListener('DOMContentLoaded', async function() {
   }
   attachIframeAutoResize();
   // Also respond to window resizes
-  window.addEventListener('resize', () => {
-    document.querySelectorAll('iframe.plot-iframe').forEach(resizeIframe);
-  });
+  // Debounced window resize handler
+  (function(){
+    let t = null;
+    window.addEventListener('resize', () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        document.querySelectorAll('iframe.plot-iframe').forEach(resizeIframe);
+      }, 150);
+    });
+  })();
   // Populate f_type_string options based on cell_class selection
   function populateHumanTypes(selectedClass, selectedType) {
     const fTypeSelect = document.getElementById('f_type_string');

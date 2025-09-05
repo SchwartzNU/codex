@@ -78,6 +78,7 @@ from codex.utils.plottingFns import (
     simple_skeleton_from_swc,
     front_side_plotly,
     strat_profile_plotly,
+    load_simple_skeleton_cached,
 )
 from codex.utils.position_stats import compute_vdri, compute_nnri
 import numpy as _np
@@ -303,7 +304,8 @@ def skeleton_plot():
             return None
 
     try:
-        skel = simple_skeleton_from_swc(swc_path)
+        mtime = os.path.getmtime(swc_path)
+        skel = load_simple_skeleton_cached(swc_path, mtime)
         fig = front_side_plotly(
             skel,
             xlim_xy=_parse_range("xlim_xy"),
@@ -314,7 +316,7 @@ def skeleton_plot():
         html = fig.to_html(
             include_plotlyjs="cdn",
             full_html=False,
-            config={"displayModeBar": False},
+            config={"displayModeBar": False, "staticPlot": True},
             default_width="100%",
         )
         return Response(html, mimetype="text/html")
@@ -346,7 +348,8 @@ def strat_plot():
             return None
 
     try:
-        skel = simple_skeleton_from_swc(swc_path)
+        mtime = os.path.getmtime(swc_path)
+        skel = load_simple_skeleton_cached(swc_path, mtime)
         # Stratification plot uses a fixed Z range across rows to cover both ON/OFF ChAT
         z_profile_extent = (-20.0, 30.0)
         fig = strat_profile_plotly(
@@ -359,7 +362,7 @@ def strat_plot():
         html = fig.to_html(
             include_plotlyjs="cdn",
             full_html=False,
-            config={"displayModeBar": False},
+            config={"displayModeBar": False, "staticPlot": True},
             default_width="100%",
         )
         return Response(html, mimetype="text/html")

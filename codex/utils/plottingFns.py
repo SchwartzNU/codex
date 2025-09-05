@@ -3,6 +3,7 @@ from typing import Sequence, Optional
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import binned_statistic_2d
+from functools import lru_cache
 
 Number = int | float
 
@@ -158,6 +159,7 @@ def projection(
     draw_skel: bool = True,
     draw_edges: bool = True,
     draw_cylinders: bool = False,
+    draw_nodes: bool = True,
     mesh_cmap: str = "Blues",
     skel_cmap: str = "Pastel2",
     vmax_fraction: float = 0.10,
@@ -211,7 +213,7 @@ def projection(
         col_nodes = [swc_colors[nt] for nt in skel.ntype[idx_keep]]
     else:
         # Use a darker gray for skeleton rendering by default
-        col_nodes = "#555555"
+        col_nodes = "#333333"
     if mesh is not None and xy_mesh.size:
         keep_mesh = _crop_window(xy_mesh)
         xy_mesh = xy_mesh[keep_mesh]
@@ -238,7 +240,7 @@ def projection(
     if heatmap_trace is not None:
         fig.add_trace(heatmap_trace)
     
-    if draw_skel and xy_skel.size > 0:
+    if draw_skel and xy_skel.size > 0 and draw_nodes:
         if xlim is not None and ylim is not None:
             xlim = xlim
             ylim = ylim
@@ -318,10 +320,10 @@ def projection(
             i0, i1 = idx_map[[n0, n1]]
             xlines.extend([xy_skel[i0, 0], xy_skel[i1, 0], None])
             ylines.extend([xy_skel[i0, 1], xy_skel[i1, 1], None])
-        edge_color = col_nodes if isinstance(col_nodes, str) else "#555555"
+        edge_color = col_nodes if isinstance(col_nodes, str) else "#333333"
         fig.add_trace(go.Scatter(
             x=xlines, y=ylines, mode="lines",
-            line=dict(color=edge_color, width=0.6),
+            line=dict(color=edge_color, width=1.0),
             opacity=cylinder_alpha,
             showlegend=False,
         ))
@@ -463,9 +465,9 @@ def threeviews(
         width=figsize[0],
         height=figsize[1],
         title=title or "",
-        template=None,  
-        plot_bgcolor="white",   
-        paper_bgcolor="white"   
+        template=None,
+        plot_bgcolor="#f8f9fa",
+        paper_bgcolor="#f8f9fa"
     )
 
     return fig
@@ -494,7 +496,7 @@ def strat_profile_plotly(
     # Histogram bars
     fig.add_trace(go.Bar(
         x=zp["histogram"], y=zp["x"], orientation='h',
-        marker=dict(color='#555555', opacity=0.5),
+        marker=dict(color='#333333', opacity=0.5),
         width=(zp["x"][1] - zp["x"][0]) if len(zp["x"]) > 1 else 0.8,
         showlegend=False,
     ), row=1, col=1)
@@ -515,7 +517,7 @@ def strat_profile_plotly(
 
     fig.update_layout(
         height=fig_height_px, width=None,
-        plot_bgcolor="white", paper_bgcolor="white",
+        plot_bgcolor="#f8f9fa", paper_bgcolor="#f8f9fa",
         margin=dict(l=5, r=5, t=10, b=5),
         showlegend=False,
     )
@@ -623,6 +625,12 @@ def simple_skeleton_from_swc(swc_path: str) -> SimpleSkeleton:
     return SimpleSkeleton(nodes=nodes, edges=edges, radii=radii, z_profile=zprof)
 
 
+@lru_cache(maxsize=512)
+def load_simple_skeleton_cached(swc_path: str, mtime: float) -> SimpleSkeleton:
+    """LRU-cached loader keyed by file path and mtime."""
+    return simple_skeleton_from_swc(swc_path)
+
+
 def front_side_plotly(
     skel: SimpleSkeleton,
     *,
@@ -663,8 +671,10 @@ def front_side_plotly(
         ylim_xz = (mid - half, mid + half)
 
     subfigs = [
-        projection(skel, plane="xy", color_by="ntype", skel_cmap="Set2", xlim=xlim_xy, ylim=ylim_xy),
-        projection(skel, plane="xz", color_by="ntype", skel_cmap="Set2", xlim=xlim_xz, ylim=ylim_xz),
+        projection(skel, plane="xy", color_by="ntype", skel_cmap="Set2", xlim=xlim_xy, ylim=ylim_xy,
+                   draw_nodes=False, draw_edges=True, draw_cylinders=False),
+        projection(skel, plane="xz", color_by="ntype", skel_cmap="Set2", xlim=xlim_xz, ylim=ylim_xz,
+                   draw_nodes=False, draw_edges=True, draw_cylinders=False),
     ]
     # Estimate per-panel width from ranges
     widths = []
@@ -714,8 +724,8 @@ def front_side_plotly(
         height=fig_height_px,
         width=None,
         title=None,  # do not show title inside plot to save space
-        plot_bgcolor="white",
-        paper_bgcolor="white",
+        plot_bgcolor="#f8f9fa",
+        paper_bgcolor="#f8f9fa",
         margin=dict(l=5, r=5, t=10, b=5),
         showlegend=False,
     )
