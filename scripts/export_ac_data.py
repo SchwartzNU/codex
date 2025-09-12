@@ -4,11 +4,12 @@ Export stratification profiles and arbor statistics for all cells labeled
 as amacrine (AC) in the configured Google Sheet.
 
 Outputs:
-  - stratification JSON: one object per segment with fields
-      {"segmentID": int, "z": [...], "histogram": [...], "distribution": [...]}
-    saved as ac_stratification_profiles_<timestamp>.json
-  - arbor stats CSV: table with segmentID + stats columns
-    first data row contains units, saved as ac_arbor_stats_<timestamp>.csv
+  - arbor stats CSV: table with segmentID + stats columns, plus a unitless
+    column "strat_peak_loc" giving the Z location (x-coordinate) of the peak
+    stratification. The first data row contains units. Saved as
+    ac_arbor_stats_<timestamp>.csv
+  - (optional, for debugging) stratification JSON per cell is still written
+    with z, histogram, distribution arrays.
 
 This script uses existing utilities:
   - codex.utils.gsheets.seg_ids_and_soma_pos_matching_gsheet_multi
@@ -27,6 +28,7 @@ import math
 import os
 import pickle
 from datetime import datetime
+import time
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -83,6 +85,22 @@ def _load_strat_profile(segid: int, data_root: str) -> Dict[str, Any] | None:
         return None
 
 
+def _compute_strat_peak(segid: int, data_root: str) -> float:
+    """Return z-location of the peak stratification (unitless), or NaN if unavailable."""
+    rec = _load_strat_profile(segid, data_root)
+    if not rec:
+        return float("nan")
+    try:
+        z = np.asarray(rec.get("z", []), float)
+        dist = np.asarray(rec.get("distribution", []), float)
+        if z.size == 0 or dist.size != z.size:
+            return float("nan")
+        i = int(np.argmax(dist))
+        return float(z[i]) if np.isfinite(z[i]) else float("nan")
+    except Exception:
+        return float("nan")
+
+
 def _load_arbor_stats(segid: int, data_root: str) -> Tuple[Dict[str, Any] | None, Dict[str, str]]:
     """Load per-cell arbor stats row and units mapping.
 
@@ -122,8 +140,10 @@ def export_ac_data(
     user_id: str,
     outdir: str,
     data_root: str,
-) -> Tuple[str, str]:
-    """Fetch AC segids, write stratification JSON and arbor CSV. Returns (strat_path, arbor_path)."""
+) -> Tuple[str, str, str]:
+    """Fetch AC segids; write strat JSON, strat-peak CSV, and arbor-stats CSV.
+    Returns (strat_json_path, strat_peak_csv_path, arbor_csv_path).
+    """
     # Fetch seg IDs for AC rows
     segids_list, _ = seg_ids_and_soma_pos_matching_gsheet_multi(
         gsheet_id=gsheet_id,
@@ -138,32 +158,64 @@ def export_ac_data(
     if not os.path.isdir(outdir):
         os.makedirs(outdir, exist_ok=True)
 
-    # 1) Stratification JSON
-    strat_records: List[Dict[str, Any]] = []
-    for sid in segids:
-        rec = _load_strat_profile(sid, data_root)
-        if rec is None:
-            continue
-        strat_records.append(rec)
-    ts = _timestamp()
-    strat_path = os.path.join(outdir, f"ac_stratification_profiles_{ts}.json")
-    with open(strat_path, "w", encoding="utf-8") as f:
-        json.dump({"records": strat_records}, f)
+    print(f"Found {len(segids)} AC cells. Starting export...", flush=True)
+    t0 = time.time()
 
-    # 2) Arbor stats CSV (with units row after header)
+    # One-pass processing with progress output
+    strat_records: List[Dict[str, Any]] = []
+    strat_peak: Dict[int, float] = {}
     stats_per_cell: Dict[int, Dict[str, Any] | None] = {}
     all_keys: set[str] = set()
     units_agg: Dict[str, str] = {}
-    for sid in segids:
+
+    for i, sid in enumerate(segids, start=1):
+        t_cell = time.time()
+        # Stratification profile + peak
+        rec = _load_strat_profile(sid, data_root)
+        if rec is not None:
+            strat_records.append(rec)
+            try:
+                z = np.asarray(rec.get("z", []), float)
+                dist = np.asarray(rec.get("distribution", []), float)
+                strat_peak[sid] = float(z[int(np.argmax(dist))]) if (z.size and z.size == dist.size) else float("nan")
+            except Exception:
+                strat_peak[sid] = float("nan")
+        else:
+            strat_peak[sid] = float("nan")
+
+        # Arbor stats
         row, units = _load_arbor_stats(sid, data_root)
         stats_per_cell[sid] = row
         if row:
             all_keys.update(row.keys())
-        # collect units mapping (first value wins)
         for k, u in units.items():
             if k not in units_agg:
                 units_agg[k] = u
 
+        # Progress print
+        dt = time.time() - t_cell
+        avg = (time.time() - t0) / i
+        remaining = avg * (len(segids) - i)
+        print(f"  [{i}/{len(segids)}] segid {sid} processed in {dt:.2f}s | avg {avg:.2f}s | ETA {remaining/60:.1f}m", flush=True)
+
+    ts = _timestamp()
+
+    # Write stratification JSON
+    strat_path = os.path.join(outdir, f"ac_stratification_profiles_{ts}.json")
+    with open(strat_path, "w", encoding="utf-8") as f:
+        json.dump({"records": strat_records}, f)
+
+    # Write stratification peak CSV
+    strat_peak_path = os.path.join(outdir, f"ac_stratification_peak_{ts}.csv")
+    with open(strat_peak_path, "w", encoding="utf-8") as f:
+        f.write("segmentID,strat_peak_loc\n")
+        for sid in segids:
+            val = strat_peak.get(sid, float("nan"))
+            f.write(f"{sid},{'' if not np.isfinite(val) else val}\n")
+
+    # Build Arbor stats CSV (with units row after header), include strat_peak_loc
+    all_keys.add("strat_peak_loc")
+    units_agg.setdefault("strat_peak_loc", "")
     columns = ["segmentID"] + sorted(all_keys)
     records: List[Dict[str, Any]] = []
     for sid in segids:
@@ -178,6 +230,7 @@ def export_ac_data(
                 if isinstance(v, float) and math.isnan(v):
                     v = np.nan
                 base[k] = v
+        base["strat_peak_loc"] = strat_peak.get(sid, float("nan"))
         records.append(base)
     df = pd.DataFrame.from_records(records, columns=columns)
     units_row = [""] + [units_agg.get(k, "") for k in sorted(all_keys)]
@@ -186,7 +239,13 @@ def export_ac_data(
     arbor_path = os.path.join(outdir, f"ac_arbor_stats_{ts}.csv")
     df_out.to_csv(arbor_path, index=False)
 
-    return strat_path, arbor_path
+    total_dt = time.time() - t0
+    print(f"Done. Processed {len(segids)} cells in {total_dt/60:.1f} min.")
+    print(f"  Strat JSON: {strat_path}")
+    print(f"  Strat peak CSV: {strat_peak_path}")
+    print(f"  Arbor stats CSV: {arbor_path}")
+
+    return strat_path, strat_peak_path, arbor_path
 
 
 def main():
@@ -198,9 +257,9 @@ def main():
     args = p.parse_args()
 
     data_root = (args.data_root or DEFAULT_DATA_ROOT).strip()
-    strat_path, arbor_path = export_ac_data(args.gsheet_id, args.user_id, args.outdir, data_root)
-    print(f"Wrote stratification JSON: {strat_path}")
-    print(f"Wrote arbor stats CSV: {arbor_path}")
+    strat_path, strat_peak_path, arbor_path = export_ac_data(args.gsheet_id, args.user_id, args.outdir, data_root)
+    # export_ac_data already prints detailed progress and summary
+    print(f"Completed. Arbor CSV: {arbor_path}; Peak CSV: {strat_peak_path}; JSON: {strat_path}")
 
 
 if __name__ == "__main__":
