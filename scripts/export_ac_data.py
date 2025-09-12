@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from codex.utils.gsheets import seg_ids_and_soma_pos_matching_gsheet_multi
+from codex.utils.gsheets import seg_ids_and_soma_pos_matching_gsheet_multi, _fetch_gsheet_data
 from codex.utils.plottingFns import simple_skeleton_from_swc
 
 
@@ -101,6 +101,62 @@ def _compute_strat_peak(segid: int, data_root: str) -> float:
         return float("nan")
 
 
+def _ac_segids_with_celltypes(
+    gsheet_id: str,
+    user_id: str,
+) -> List[Tuple[int, str]]:
+    """
+    Read the Google Sheet and return a list of (segid, cell_type) for rows
+    where Cell Class == 'AC' and Cell Type is non-empty. SegIDs must be digits.
+    """
+    data = _fetch_gsheet_data(gsheet_id, user_id)
+    if not data:
+        return []
+    import pandas as pd  # local alias
+    dfs = {tab: pd.DataFrame(rows) for tab, rows in data.items()}
+    # Use first sheet
+    T = dfs[list(dfs.keys())[0]] if dfs else pd.DataFrame()
+    if T.empty:
+        return []
+    # Header in first row
+    new_columns = T.iloc[0].tolist()
+    T.columns = new_columns
+    T = T.drop(index=0).reset_index(drop=True)
+    # Normalize
+    def _series(name: str):
+        return T[name].astype(str) if name in T.columns else pd.Series([], dtype=str)
+    cc = _series("Cell Class")
+    ct = _series("Cell Type")
+    sid_col = T["Final SegID"] if "Final SegID" in T.columns else []
+    out: List[Tuple[int, str]] = []
+    for i in range(len(T)):
+        try:
+            cc_i = str(cc.iloc[i]).strip() if len(cc) else ""
+            ct_i = str(ct.iloc[i]).strip() if len(ct) else ""
+            sid_i = T.iloc[i]["Final SegID"] if "Final SegID" in T.columns else None
+            if not cc_i or cc_i.lower() != "ac":
+                continue
+            if not ct_i or ct_i.lower() == "nan":
+                continue  # exclude blank cell types
+            if sid_i is None:
+                continue
+            sid_s = str(sid_i).strip()
+            if not sid_s.isdigit():
+                continue
+            out.append((int(sid_s), ct_i))
+        except Exception:
+            continue
+    # Deduplicate by segid, keep first occurrence
+    seen = set()
+    uniq: List[Tuple[int, str]] = []
+    for sid, ct in out:
+        if sid in seen:
+            continue
+        seen.add(sid)
+        uniq.append((sid, ct))
+    return uniq
+
+
 def _load_arbor_stats(segid: int, data_root: str) -> Tuple[Dict[str, Any] | None, Dict[str, str]]:
     """Load per-cell arbor stats row and units mapping.
 
@@ -144,21 +200,15 @@ def export_ac_data(
     """Fetch AC segids; write strat JSON, strat-peak CSV, and arbor-stats CSV.
     Returns (strat_json_path, strat_peak_csv_path, arbor_csv_path).
     """
-    # Fetch seg IDs for AC rows
-    segids_list, _ = seg_ids_and_soma_pos_matching_gsheet_multi(
-        gsheet_id=gsheet_id,
-        user_id=user_id,
-        human_cell_type=None,
-        machine_cell_type=None,
-        cell_class="AC",
-    )
-    segids = [int(s) for s in segids_list if str(s).isdigit()]
-    segids = sorted(set(segids))
+    # Fetch (segid, cell_type) for AC rows with non-empty cell type
+    ac_rows = _ac_segids_with_celltypes(gsheet_id, user_id)
+    segids = sorted({sid for sid, _ in ac_rows})
+    segid_to_ct = {sid: ct for sid, ct in ac_rows}
 
     if not os.path.isdir(outdir):
         os.makedirs(outdir, exist_ok=True)
 
-    print(f"Found {len(segids)} AC cells. Starting export...", flush=True)
+    print(f"Found {len(segids)} AC cells with non-empty Cell Type. Starting export...", flush=True)
     t0 = time.time()
 
     # One-pass processing with progress output
@@ -208,18 +258,20 @@ def export_ac_data(
     # Write stratification peak CSV
     strat_peak_path = os.path.join(outdir, f"ac_stratification_peak_{ts}.csv")
     with open(strat_peak_path, "w", encoding="utf-8") as f:
-        f.write("segmentID,strat_peak_loc\n")
+        f.write("segmentID,cell_type,strat_peak_loc\n")
         for sid in segids:
             val = strat_peak.get(sid, float("nan"))
-            f.write(f"{sid},{'' if not np.isfinite(val) else val}\n")
+            ct = segid_to_ct.get(sid, "")
+            f.write(f"{sid},{ct},{'' if not np.isfinite(val) else val}\n")
 
     # Build Arbor stats CSV (with units row after header), include strat_peak_loc
     all_keys.add("strat_peak_loc")
     units_agg.setdefault("strat_peak_loc", "")
-    columns = ["segmentID"] + sorted(all_keys)
+    # Include cell_type as a string column (no unit)
+    columns = ["segmentID", "cell_type"] + sorted(all_keys)
     records: List[Dict[str, Any]] = []
     for sid in segids:
-        base: Dict[str, Any] = {"segmentID": int(sid)}
+        base: Dict[str, Any] = {"segmentID": int(sid), "cell_type": segid_to_ct.get(sid, "")}
         row = stats_per_cell.get(sid)
         if not row:
             for k in all_keys:
@@ -233,7 +285,8 @@ def export_ac_data(
         base["strat_peak_loc"] = strat_peak.get(sid, float("nan"))
         records.append(base)
     df = pd.DataFrame.from_records(records, columns=columns)
-    units_row = [""] + [units_agg.get(k, "") for k in sorted(all_keys)]
+    # Units row: empty for segmentID and cell_type, then per-stat units
+    units_row = ["", ""] + [units_agg.get(k, "") for k in sorted(all_keys)]
     df_units = pd.DataFrame([units_row], columns=columns)
     df_out = pd.concat([df_units, df], ignore_index=True)
     arbor_path = os.path.join(outdir, f"ac_arbor_stats_{ts}.csv")
