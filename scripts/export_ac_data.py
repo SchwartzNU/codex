@@ -204,11 +204,27 @@ def export_ac_data(
     ac_rows = _ac_segids_with_celltypes(gsheet_id, user_id)
     segids = sorted({sid for sid, _ in ac_rows})
     segid_to_ct = {sid: ct for sid, ct in ac_rows}
+    # Skip cells without an arbor_stats.pkl file present
+    segids_with_stats = []
+    for sid in segids:
+        pkl_path = os.path.join(data_root, str(sid), "arbor_stats.pkl")
+        if os.path.exists(pkl_path):
+            segids_with_stats.append(sid)
+    skipped = len(segids) - len(segids_with_stats)
+    segids = segids_with_stats
 
     if not os.path.isdir(outdir):
         os.makedirs(outdir, exist_ok=True)
 
-    print(f"Found {len(segids)} AC cells with non-empty Cell Type. Starting export...", flush=True)
+    print(
+        f"Found {len(segids)} AC cells with non-empty Cell Type and arbor_stats.pkl"
+        + (f" (skipped {skipped} lacking stats)" if skipped else "")
+        + ". Starting export...",
+        flush=True,
+    )
+    if not segids:
+        print("No cells to export after filtering; exiting.")
+        return "", "", ""
     t0 = time.time()
 
     # One-pass processing with progress output
