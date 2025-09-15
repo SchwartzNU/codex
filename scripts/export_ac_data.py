@@ -34,7 +34,11 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from codex.utils.gsheets import seg_ids_and_soma_pos_matching_gsheet_multi, _fetch_gsheet_data
+from codex.utils.gsheets import (
+    seg_ids_and_soma_pos_matching_gsheet_multi,
+    _fetch_gsheet_data,
+    ENDPOINT,
+)
 from codex.utils.plottingFns import simple_skeleton_from_swc
 
 
@@ -112,6 +116,16 @@ def _ac_segids_with_celltypes(
     """
     data = _fetch_gsheet_data(gsheet_id, user_id)
     if not data:
+        # Provide a clear, actionable error before returning no rows
+        api_url = f"{ENDPOINT}/{gsheet_id}/{user_id}"
+        print(
+            "ERROR: Failed to fetch Google Sheet data (empty/non-JSON).\n"
+            f"  Endpoint: {api_url}\n"
+            f"  gsheet_id: {gsheet_id} | user_id: {user_id}\n"
+            "Hints: Check network/VPN, verify the API is reachable, and that the user-id is valid.\n"
+            "If the Sheet opens in a browser but this fails, the API proxy may be down.",
+            flush=True,
+        )
         return []
     import pandas as pd  # local alias
     dfs = {tab: pd.DataFrame(rows) for tab, rows in data.items()}
