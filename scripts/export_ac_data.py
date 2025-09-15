@@ -29,7 +29,7 @@ import os
 import pickle
 from datetime import datetime
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -109,6 +109,8 @@ def _ac_segids_with_celltypes(
     gsheet_id: str,
     user_id: str,
     displaced_only: bool = False,
+    non_displaced_only: bool = False,
+    exclude_types: Optional[List[str]] = None,
 ) -> List[Tuple[int, str]]:
     """
     Read the Google Sheet and return a list of (segid, cell_type) for rows
@@ -145,6 +147,10 @@ def _ac_segids_with_celltypes(
     soma_loc = _series("Machine soma location")
     sid_col = T["Final SegID"] if "Final SegID" in T.columns else []
     out: List[Tuple[int, str]] = []
+    # Normalize exclude list for case-insensitive exact match
+    exclude_norm: set[str] = set()
+    if exclude_types:
+        exclude_norm = {str(s).strip().casefold() for s in exclude_types if str(s).strip()}
     for i in range(len(T)):
         try:
             cc_i = str(cc.iloc[i]).strip() if len(cc) else ""
@@ -155,9 +161,18 @@ def _ac_segids_with_celltypes(
                 continue
             if not ct_i or ct_i.lower() == "nan":
                 continue  # exclude blank cell types
+            if exclude_norm and ct_i.strip().casefold() in exclude_norm:
+                continue
+            loc_l = soma_i.lower()
             if displaced_only:
                 # Keep rows where Machine soma location indicates GCL
-                if not soma_i or "gcl" not in soma_i.lower():
+                if not soma_i or "gcl" not in loc_l:
+                    continue
+            if non_displaced_only:
+                # Keep rows in IPL and/or INL; exclude any that include GCL
+                if not soma_i:
+                    continue
+                if ("ipl" not in loc_l and "inl" not in loc_l) or ("gcl" in loc_l):
                     continue
             if sid_i is None:
                 continue
@@ -218,12 +233,20 @@ def export_ac_data(
     outdir: str,
     data_root: str,
     displaced_only: bool = False,
+    non_displaced_only: bool = False,
+    exclude_types: Optional[List[str]] = None,
 ) -> Tuple[str, str, str]:
     """Fetch AC segids; write strat JSON, strat-peak CSV, and arbor-stats CSV.
     Returns (strat_json_path, strat_peak_csv_path, arbor_csv_path).
     """
     # Fetch (segid, cell_type) for AC rows with non-empty cell type
-    ac_rows = _ac_segids_with_celltypes(gsheet_id, user_id, displaced_only=displaced_only)
+    ac_rows = _ac_segids_with_celltypes(
+        gsheet_id,
+        user_id,
+        displaced_only=displaced_only,
+        non_displaced_only=non_displaced_only,
+        exclude_types=exclude_types,
+    )
     segids = sorted({sid for sid, _ in ac_rows})
     segid_to_ct = {sid: ct for sid, ct in ac_rows}
     # Skip cells without an arbor_stats.pkl file present
@@ -240,7 +263,8 @@ def export_ac_data(
 
     print(
         f"Found {len(segids)} AC cells with non-empty Cell Type and arbor_stats.pkl"
-        + (" [displaced only]" if displaced_only else "")
+        + (" [displaced only]" if displaced_only else (" [non-displaced only]" if non_displaced_only else ""))
+        + (" [exclude types applied]" if (exclude_types and len(exclude_types) > 0) else "")
         + (f" (skipped {skipped} lacking stats)" if skipped else "")
         + ". Starting export...",
         flush=True,
@@ -346,16 +370,32 @@ def main():
     p.add_argument("--user-id", default=DEFAULT_USER_ID, help="User ID for Sheet service")
     p.add_argument("--outdir", default="./exports", help="Output directory")
     p.add_argument("--data-root", default=DEFAULT_DATA_ROOT, help="Root folder containing <segid>/ subfolders with SWC and arbor_stats.pkl")
-    p.add_argument("--displaced", action="store_true", help="Limit to cells with Machine soma location in GCL")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--displaced", action="store_true", help="Limit to cells with Machine soma location in GCL")
+    group.add_argument(
+        "--non-displaced",
+        action="store_true",
+        help="Limit to cells with Machine soma location in IPL and/or INL (excluding any with GCL)",
+    )
+    p.add_argument(
+        "--exclude",
+        default="",
+        help="Comma-separated list of 'Cell Type' names to exclude (case-insensitive exact match)",
+    )
     args = p.parse_args()
 
     data_root = (args.data_root or DEFAULT_DATA_ROOT).strip()
+    # Parse exclude list
+    exclude_list = [s.strip() for s in (args.exclude or "").split(",") if s.strip()]
+
     strat_path, strat_peak_path, arbor_path = export_ac_data(
         args.gsheet_id,
         args.user_id,
         args.outdir,
         data_root,
         displaced_only=args.displaced,
+        non_displaced_only=args.non_displaced,
+        exclude_types=exclude_list if exclude_list else None,
     )
     # export_ac_data already prints detailed progress and summary
     print(f"Completed. Arbor CSV: {arbor_path}; Peak CSV: {strat_peak_path}; JSON: {strat_path}")
