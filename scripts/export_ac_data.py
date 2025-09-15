@@ -111,6 +111,7 @@ def _ac_segids_with_celltypes(
     displaced_only: bool = False,
     non_displaced_only: bool = False,
     exclude_types: Optional[List[str]] = None,
+    exclude_segids: Optional[List[int]] = None,
 ) -> List[Tuple[int, str]]:
     """
     Read the Google Sheet and return a list of (segid, cell_type) for rows
@@ -151,6 +152,8 @@ def _ac_segids_with_celltypes(
     exclude_norm: set[str] = set()
     if exclude_types:
         exclude_norm = {str(s).strip().casefold() for s in exclude_types if str(s).strip()}
+    exclude_sid_set = set(exclude_segids or [])
+
     for i in range(len(T)):
         try:
             cc_i = str(cc.iloc[i]).strip() if len(cc) else ""
@@ -179,7 +182,10 @@ def _ac_segids_with_celltypes(
             sid_s = str(sid_i).strip()
             if not sid_s.isdigit():
                 continue
-            out.append((int(sid_s), ct_i))
+            sid_val = int(sid_s)
+            if exclude_sid_set and sid_val in exclude_sid_set:
+                continue
+            out.append((sid_val, ct_i))
         except Exception:
             continue
     # Deduplicate by segid, keep first occurrence
@@ -235,6 +241,7 @@ def export_ac_data(
     displaced_only: bool = False,
     non_displaced_only: bool = False,
     exclude_types: Optional[List[str]] = None,
+    exclude_segids: Optional[List[int]] = None,
 ) -> Tuple[str, str, str]:
     """Fetch AC segids; write strat JSON, strat-peak CSV, and arbor-stats CSV.
     Returns (strat_json_path, strat_peak_csv_path, arbor_csv_path).
@@ -246,6 +253,7 @@ def export_ac_data(
         displaced_only=displaced_only,
         non_displaced_only=non_displaced_only,
         exclude_types=exclude_types,
+        exclude_segids=exclude_segids,
     )
     segids = sorted({sid for sid, _ in ac_rows})
     segid_to_ct = {sid: ct for sid, ct in ac_rows}
@@ -265,6 +273,7 @@ def export_ac_data(
         f"Found {len(segids)} AC cells with non-empty Cell Type and arbor_stats.pkl"
         + (" [displaced only]" if displaced_only else (" [non-displaced only]" if non_displaced_only else ""))
         + (" [exclude types applied]" if (exclude_types and len(exclude_types) > 0) else "")
+        + (" [exclude segIDs applied]" if (exclude_segids and len(exclude_segids) > 0) else "")
         + (f" (skipped {skipped} lacking stats)" if skipped else "")
         + ". Starting export...",
         flush=True,
@@ -382,11 +391,28 @@ def main():
         default="",
         help="Comma-separated list of 'Cell Type' names to exclude (case-insensitive exact match)",
     )
+    p.add_argument(
+        "--exclude-segid",
+        default="",
+        help="Comma-separated list of segment IDs to exclude",
+    )
     args = p.parse_args()
 
     data_root = (args.data_root or DEFAULT_DATA_ROOT).strip()
     # Parse exclude list
     exclude_list = [s.strip() for s in (args.exclude or "").split(",") if s.strip()]
+    exclude_segids_raw = [s.strip() for s in (args.exclude_segid or "").split(",") if s.strip()]
+    exclude_segids: List[int] = []
+    invalid_segids: List[str] = []
+    for seg in exclude_segids_raw:
+        try:
+            exclude_segids.append(int(seg))
+        except ValueError:
+            invalid_segids.append(seg)
+    if invalid_segids:
+        raise SystemExit(
+            "Invalid segID(s) supplied to --exclude-segid: " + ", ".join(invalid_segids)
+        )
 
     strat_path, strat_peak_path, arbor_path = export_ac_data(
         args.gsheet_id,
@@ -396,6 +422,7 @@ def main():
         displaced_only=args.displaced,
         non_displaced_only=args.non_displaced,
         exclude_types=exclude_list if exclude_list else None,
+        exclude_segids=exclude_segids if exclude_segids else None,
     )
     # export_ac_data already prints detailed progress and summary
     print(f"Completed. Arbor CSV: {arbor_path}; Peak CSV: {strat_peak_path}; JSON: {strat_path}")
