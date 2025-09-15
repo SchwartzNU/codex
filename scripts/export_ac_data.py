@@ -104,6 +104,7 @@ def _compute_strat_peak(segid: int, data_root: str) -> float:
 def _ac_segids_with_celltypes(
     gsheet_id: str,
     user_id: str,
+    displaced_only: bool = False,
 ) -> List[Tuple[int, str]]:
     """
     Read the Google Sheet and return a list of (segid, cell_type) for rows
@@ -127,17 +128,23 @@ def _ac_segids_with_celltypes(
         return T[name].astype(str) if name in T.columns else pd.Series([], dtype=str)
     cc = _series("Cell Class")
     ct = _series("Cell Type")
+    soma_loc = _series("Machine soma location")
     sid_col = T["Final SegID"] if "Final SegID" in T.columns else []
     out: List[Tuple[int, str]] = []
     for i in range(len(T)):
         try:
             cc_i = str(cc.iloc[i]).strip() if len(cc) else ""
             ct_i = str(ct.iloc[i]).strip() if len(ct) else ""
+            soma_i = str(soma_loc.iloc[i]).strip() if len(soma_loc) else ""
             sid_i = T.iloc[i]["Final SegID"] if "Final SegID" in T.columns else None
             if not cc_i or cc_i.lower() != "ac":
                 continue
             if not ct_i or ct_i.lower() == "nan":
                 continue  # exclude blank cell types
+            if displaced_only:
+                # Keep rows where Machine soma location indicates GCL
+                if not soma_i or "gcl" not in soma_i.lower():
+                    continue
             if sid_i is None:
                 continue
             sid_s = str(sid_i).strip()
@@ -196,12 +203,13 @@ def export_ac_data(
     user_id: str,
     outdir: str,
     data_root: str,
+    displaced_only: bool = False,
 ) -> Tuple[str, str, str]:
     """Fetch AC segids; write strat JSON, strat-peak CSV, and arbor-stats CSV.
     Returns (strat_json_path, strat_peak_csv_path, arbor_csv_path).
     """
     # Fetch (segid, cell_type) for AC rows with non-empty cell type
-    ac_rows = _ac_segids_with_celltypes(gsheet_id, user_id)
+    ac_rows = _ac_segids_with_celltypes(gsheet_id, user_id, displaced_only=displaced_only)
     segids = sorted({sid for sid, _ in ac_rows})
     segid_to_ct = {sid: ct for sid, ct in ac_rows}
     # Skip cells without an arbor_stats.pkl file present
@@ -218,6 +226,7 @@ def export_ac_data(
 
     print(
         f"Found {len(segids)} AC cells with non-empty Cell Type and arbor_stats.pkl"
+        + (" [displaced only]" if displaced_only else "")
         + (f" (skipped {skipped} lacking stats)" if skipped else "")
         + ". Starting export...",
         flush=True,
@@ -323,10 +332,17 @@ def main():
     p.add_argument("--user-id", default=DEFAULT_USER_ID, help="User ID for Sheet service")
     p.add_argument("--outdir", default="./exports", help="Output directory")
     p.add_argument("--data-root", default=DEFAULT_DATA_ROOT, help="Root folder containing <segid>/ subfolders with SWC and arbor_stats.pkl")
+    p.add_argument("--displaced", action="store_true", help="Limit to cells with Machine soma location in GCL")
     args = p.parse_args()
 
     data_root = (args.data_root or DEFAULT_DATA_ROOT).strip()
-    strat_path, strat_peak_path, arbor_path = export_ac_data(args.gsheet_id, args.user_id, args.outdir, data_root)
+    strat_path, strat_peak_path, arbor_path = export_ac_data(
+        args.gsheet_id,
+        args.user_id,
+        args.outdir,
+        data_root,
+        displaced_only=args.displaced,
+    )
     # export_ac_data already prints detailed progress and summary
     print(f"Completed. Arbor CSV: {arbor_path}; Peak CSV: {strat_peak_path}; JSON: {strat_path}")
 
