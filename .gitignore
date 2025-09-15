@@ -153,3 +153,6 @@ dmypy.json
 .pyre/
 *.csv
 *.json
+*.png
+*.mat
+*.npy
