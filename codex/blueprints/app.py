@@ -185,6 +185,7 @@ def explore():
 def morpho_typer():
     f_type_string = request.args.get("f_type_string", "")
     m_type_string = request.args.get("m_type_string", "")
+    other_type_string = request.args.get("other_type_string", "")
     cell_class = request.args.get("cell_class", "")
     seg_ids_string = request.args.get("seg_ids_string", "")
     stats_enabled = request.args.get("stats_enabled", "0")
@@ -204,6 +205,7 @@ def morpho_typer():
         data_version=data_version,
         f_type_string=f_type_string,
         m_type_string=m_type_string,
+        other_type_string=other_type_string,
         cell_class=cell_class,
         seg_ids_string=seg_ids_string,
         cell_types_by_class=ct_map,
@@ -214,6 +216,7 @@ def render_morpho_typer_neuron_list(
     data_version,
     f_type_string,
     m_type_string,
+    other_type_string,
     cell_class,
     seg_ids_string,
     cell_types_by_class,
@@ -221,14 +224,16 @@ def render_morpho_typer_neuron_list(
 ):
     f_type_string = (f_type_string or "").strip()
     m_type_string = (m_type_string or "").strip()
+    other_type_string = (other_type_string or "").strip()
     cell_class = (cell_class or "").strip()
-    if f_type_string or m_type_string or cell_class:
+    if f_type_string or m_type_string or other_type_string or cell_class:
         # Apply AND logic across provided filters
         seg_ids, soma_pos = seg_ids_and_soma_pos_matching_gsheet_multi(
             gsheet_id="1o4i53h92oyzsBc8jEWKmF8ZnfyXKXtFCTaYSecs8tBk",
             user_id="gregs_eyewire2",
             human_cell_type=f_type_string if f_type_string else None,
             machine_cell_type=m_type_string if m_type_string else None,
+            other_type_contains=other_type_string if other_type_string else None,
             cell_class=cell_class if cell_class else None,
         )
     elif seg_ids_string:
@@ -274,6 +279,7 @@ def render_morpho_typer_neuron_list(
         data_version=data_version,
         f_type_string=f_type_string,
         m_type_string=m_type_string,
+        other_type_string=other_type_string,
         cell_class=cell_class,
         seg_ids_string=seg_ids_string_out,
         cell_types_by_class=cell_types_by_class,

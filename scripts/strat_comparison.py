@@ -348,7 +348,7 @@ def _ensure_outdir(p: str) -> None:
         os.makedirs(p, exist_ok=True)
 
 
-def save_outputs(outdir: str, M: MatrixOutputs) -> Tuple[str, str, str, str, str]:
+def save_outputs(outdir: str, M: MatrixOutputs) -> Tuple[str, str, str, str, str, str, str]:
     _ensure_outdir(outdir)
     # Save matrix as .npy and .csv
     npy_path = os.path.join(outdir, "cosine_similarity_2P_vs_EW.npy")
@@ -457,12 +457,74 @@ def save_outputs(outdir: str, M: MatrixOutputs) -> Tuple[str, str, str, str, str
         plt.tight_layout()
         plt.savefig(fig_path, dpi=200)
         plt.close()
+
+        # Also compute and plot means by cell type (row and column groups)
+        def _groups(labels: List[str]):
+            if not labels:
+                return []
+            groups = []
+            start = 0
+            cur = labels[0]
+            for i in range(1, len(labels) + 1):
+                if i == len(labels) or labels[i] != cur:
+                    end = i - 1
+                    mid = (start + end) / 2.0
+                    groups.append((cur, start, end, mid))
+                    if i < len(labels):
+                        start = i
+                        cur = labels[i]
+            return groups
+
+        row_groups = _groups(M.row_types)
+        col_groups = _groups(M.col_types)
+
+        # Enforce cluster-consistent ordering for column type groups to match rows
+        row_type_order = {g[0]: i for i, g in enumerate(row_groups)}
+        col_groups = sorted(col_groups, key=lambda g: (row_type_order.get(g[0], 10**9), g[0]))
+
+        # Build mean matrix in this order
+        R, C = len(row_groups), len(col_groups)
+        mean_mat = np.zeros((R, C), dtype=float)
+        for ir, (_, rs, re, _) in enumerate(row_groups):
+            for jc, (_, cs, ce, _) in enumerate(col_groups):
+                block = sim[rs:re + 1, cs:ce + 1]
+                mean_mat[ir, jc] = float(np.mean(block)) if block.size else np.nan
+
+        # Save means CSV
+        means_csv_path = os.path.join(outdir, "cosine_similarity_by_type.csv")
+        import csv as _csv
+        with open(means_csv_path, "w", newline="", encoding="utf-8") as f:
+            w = _csv.writer(f)
+            header = ["2P_type \\ EW_type"] + [g[0] for g in col_groups]
+            w.writerow(header)
+            for ir, g in enumerate(row_groups):
+                label = g[0]
+                row_vals = [f"{v:.6f}" for v in mean_mat[ir, :]]
+                w.writerow([label] + row_vals)
+
+        # Plot means heatmap (always linear scale, no threshold)
+        means_fig_path = os.path.join(outdir, "cosine_similarity_heatmap_means_by_type.png")
+        plt.figure(figsize=(min(14, max(8, C/6)), min(12, max(6, R/2))))
+        im = plt.imshow(mean_mat, aspect='auto', interpolation='nearest', cmap='viridis', vmin=0.0, vmax=1.0)
+        cbar = plt.colorbar(im, label='Mean cosine similarity')
+
+        plt.title('2P vs EW similarity (means by cell type)')
+        plt.xlabel('EW cell types')
+        plt.ylabel('2P cell types')
+        plt.yticks(range(R), [g[0] for g in row_groups], fontsize=8)
+        plt.xticks(range(C), [g[0] for g in col_groups], rotation=45, fontsize=8, ha='right', rotation_mode='anchor')
+        plt.gcf().subplots_adjust(bottom=min(0.35, 0.20 + 0.002 * C))
+        plt.tight_layout()
+        plt.savefig(means_fig_path, dpi=200)
+        plt.close()
     except Exception as e:
         # If matplotlib is missing, skip plotting but keep other outputs
         with open(os.path.join(outdir, "PLOT_ERROR.txt"), "w", encoding="utf-8") as f:
             f.write(f"Plotting failed: {e}\n")
+        means_csv_path = os.path.join(outdir, "cosine_similarity_by_type.csv")
+        means_fig_path = os.path.join(outdir, "cosine_similarity_heatmap_means_by_type.png")
 
-    return npy_path, csv_path, row_meta_path, col_meta_path, fig_path
+    return npy_path, csv_path, row_meta_path, col_meta_path, fig_path, means_csv_path, means_fig_path
 
 
 def _read_ew_types_csv(path: str) -> Dict[int, str]:
@@ -518,13 +580,15 @@ def main() -> None:
     _COLOR_SCALE = str(args.color_scale)
     _THRESH = float(args.threshold)
     _LOG_EPS = float(args.log_eps)
-    npy_path, csv_path, row_meta_path, col_meta_path, fig_path = save_outputs(args.outdir, M)
+    npy_path, csv_path, row_meta_path, col_meta_path, fig_path, means_csv_path, means_fig_path = save_outputs(args.outdir, M)
     print("Done.")
     print(f"  Similarity matrix (npy): {npy_path}")
     print(f"  Similarity matrix (csv): {csv_path}")
     print(f"  2P row metadata: {row_meta_path}")
     print(f"  EW col metadata: {col_meta_path}")
     print(f"  Heatmap: {fig_path}")
+    print(f"  Mean-by-type matrix (csv): {means_csv_path}")
+    print(f"  Mean-by-type heatmap: {means_fig_path}")
 
 
 if __name__ == "__main__":

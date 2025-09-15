@@ -1,5 +1,7 @@
 
 import requests
+import os
+import json
 import pandas as pd
 import numpy as np
 from typing import Dict, List
@@ -21,9 +23,33 @@ def _fetch_gsheet_data(gsheet_id: str, user_id: str) -> dict:
             return resp.json()
         except Exception as e:
             logger.warning(f"GSheet JSON decode failed for {gsheet_id}: {e}")
+            # Fallback to a local cache if available
+            cache_env = os.environ.get("CODEX_GSHEET_CACHE", "").strip()
+            fallback_paths = [p for p in [cache_env, os.path.join("morph_data", "gsheet_cache.json")] if p]
+            for p in fallback_paths:
+                try:
+                    if os.path.isfile(p):
+                        with open(p, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        logger.warning(f"Using local gSheet cache from {p}")
+                        return data if isinstance(data, dict) else {}
+                except Exception as e2:
+                    logger.warning(f"Failed reading local gSheet cache {p}: {e2}")
             return {}
     except Exception as e:
         logger.warning(f"GSheet fetch failed for {gsheet_id}: {e}")
+        # Try local cache as well when HTTP fetch fails
+        cache_env = os.environ.get("CODEX_GSHEET_CACHE", "").strip()
+        fallback_paths = [p for p in [cache_env, os.path.join("morph_data", "gsheet_cache.json")] if p]
+        for p in fallback_paths:
+            try:
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    logger.warning(f"Using local gSheet cache from {p}")
+                    return data if isinstance(data, dict) else {}
+            except Exception as e2:
+                logger.warning(f"Failed reading local gSheet cache {p}: {e2}")
         return {}
 
 
@@ -90,6 +116,7 @@ def seg_ids_and_soma_pos_matching_gsheet_multi(
     human_cell_type: Optional[str] = None,
     machine_cell_type: Optional[str] = None,
     cell_class: Optional[str] = None,
+    other_type_contains: Optional[str] = None,
 ) -> Tuple[List[str], np.ndarray]:
     """
     Filter a Google Sheet by multiple optional conditions combined with AND:
@@ -119,22 +146,43 @@ def seg_ids_and_soma_pos_matching_gsheet_multi(
 
     mask = pd.Series([True] * len(T))
 
+    def _norm_col(s: str) -> str:
+        s = str(s).strip().lower()
+        return "".join(ch for ch in s if ch.isalnum())
+
+    def _find_col(df: pd.DataFrame, targets: List[str]) -> Optional[str]:
+        targets_n = { _norm_col(t) for t in targets }
+        for c in df.columns:
+            if _norm_col(c) in targets_n:
+                return c
+        return None
+
     if human_cell_type:
-        col = "Cell Type"
+        col = _find_col(T, ["Cell Type", "CellType"]) or "Cell Type"
         if col in T.columns:
             mask &= T[col].astype(str).str.contains(human_cell_type, case=False, na=False)
         else:
             mask &= False
 
     if machine_cell_type:
-        col = "Machine label"
+        col = _find_col(T, ["Machine label", "Machine Label", "MachineLabel"]) or "Machine label"
         if col in T.columns:
             mask &= T[col].astype(str).str.contains(machine_cell_type, case=False, na=False)
         else:
             mask &= False
 
+    if other_type_contains:
+        # Accept common header variants (case-insensitive, punctuation/space agnostic)
+        col = _find_col(T, ["Other type", "Other Type", "Other types", "OtherTypes", "OtherType"]) or "Other type"
+        if col in T.columns:
+            # case-sensitive substring match
+            mask &= T[col].astype(str).str.contains(other_type_contains, case=True, na=False)
+        else:
+            logger.warning(f"seg_ids_and_soma_pos_matching_gsheet_multi: column 'Other type' not found in gsheet; available={list(T.columns)[:8]}...")
+            mask &= False
+
     if cell_class:
-        col = "Cell Class"
+        col = _find_col(T, ["Cell Class", "CellClass"]) or "Cell Class"
         if col in T.columns:
             # exact match ignoring case and leading/trailing whitespace
             mask &= (

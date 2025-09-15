@@ -14,6 +14,9 @@ Morpho-Typer
         <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" type="search"
                id="m_type_string" name="m_type_string" placeholder="Cell Type (machine)" aria-label="m_type_input"
                value="{{ m_type_string }}">
+        <input class="form-control mr-sm-2" style="width: 20vw;" autocomplete="off" type="search"
+               id="other_type_string" name="other_type_string" placeholder="Other type (case-sensitive contains)" aria-label="other_type_input"
+               value="{{ other_type_string }}">
         <select class="form-control mr-sm-2" style="width: 12vw;" id="cell_class" name="cell_class" aria-label="cell_class_input">
             <option value="" {% if not cell_class %}selected{% endif %}>Cell Class</option>
             <option value="RGC" {% if cell_class == 'RGC' %}selected{% endif %}>RGC</option>
